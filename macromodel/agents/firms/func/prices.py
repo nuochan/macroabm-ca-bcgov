@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
+from typing import Optional
 
 import numpy as np
+from scipy.interpolate import interp1d
 
 
 class PriceSetter(ABC):
@@ -206,6 +208,129 @@ class DefaultPriceSetter(PriceSetter):
             * (1 + self.price_setting_speed_dp * demand_pull_inflation)
             * (1 + self.price_setting_speed_cp * cost_push_inflation),
         )
+
+
+class ExoEnergyExogenousPriceSetter(DefaultPriceSetter):
+    """Price setter that overrides energy sector prices with exogenous CIMS trajectories.
+
+    All non-energy industries follow the default endogenous price-setting rule.
+    For energy industries, prices are replaced by a normalised CIMS price path:
+
+        price[t] = initial_model_price * (CIMS_price[t] / CIMS_price[initial_year])
+
+    Industry positions are resolved at runtime from their names, so the class
+    works regardless of the number of industries or their ordering.
+
+    Attributes:
+        exo_prices: ExoPrices container (injected after instantiation).
+        industries: Ordered list of industry names matching the firms array
+            (injected after instantiation).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.exo_prices = None
+        self.industries: list[str] = []
+
+    def _indices_for(self, industry_name: str) -> list[int]:
+        """Return all firm array indices whose industry matches industry_name."""
+        return [i for i, name in enumerate(self.industries) if name == industry_name]
+
+    def _normalised_price_path(self, cims_row: int, df, current_time: int) -> float:
+        """Interpolate a CIMS price path and normalise to the initial year.
+
+        The CSV layout expected: row 0 holds the years, the requested row
+        holds the $/GJ values.  Both span columns 12–22 (inclusive).
+
+        Args:
+            cims_row: Row index of the energy product in the CSV.
+            df: DataFrame loaded from the CIMS CSV.
+            current_time: Current simulation quarter index (0 = Q1 initial_year).
+
+        Returns:
+            Ratio of current price to initial-year price (1.0 at t=0).
+        """
+        initial_year = self.exo_prices.initial_year
+        years = np.array(df.iloc[0, 12:23]).astype(int)
+        prices = np.array(df.iloc[cims_row, 12:23], dtype=float)
+        fn = interp1d(years, prices)
+        yr = initial_year + current_time // 4 + current_time % 4 / 4 - 0.25
+        return float(fn(yr)) / float(fn(initial_year))
+
+    def compute_price(
+        self,
+        prev_prices: np.ndarray,
+        current_estimated_ppi_inflation: float,
+        excess_demand: np.ndarray,
+        inventories: np.ndarray,
+        production: np.ndarray,
+        prev_average_good_prices: np.ndarray,
+        prev_firm_prices: np.ndarray,
+        prev_supply: np.ndarray,
+        prev_demand: np.ndarray,
+        current_firm_sectors: np.ndarray,
+        curr_unit_costs: np.ndarray,
+        prev_unit_costs: np.ndarray,
+        ppi_during: np.ndarray,
+        current_time: int,
+        min_inflation: float = -0.1,
+        max_inflation: float = 0.1,
+    ) -> np.ndarray:
+        price = super().compute_price(
+            prev_prices=prev_prices,
+            current_estimated_ppi_inflation=current_estimated_ppi_inflation,
+            excess_demand=excess_demand,
+            inventories=inventories,
+            production=production,
+            prev_average_good_prices=prev_average_good_prices,
+            prev_firm_prices=prev_firm_prices,
+            prev_supply=prev_supply,
+            prev_demand=prev_demand,
+            current_firm_sectors=current_firm_sectors,
+            curr_unit_costs=curr_unit_costs,
+            prev_unit_costs=prev_unit_costs,
+            ppi_during=ppi_during,
+            current_time=current_time,
+            min_inflation=min_inflation,
+            max_inflation=max_inflation,
+        )
+
+        if self.exo_prices is None or not self.industries:
+            return price
+
+        base_prices = (
+            self.exo_prices.initial_model_prices
+            if self.exo_prices.initial_model_prices is not None
+            else prev_average_good_prices
+        )
+        fossil_df = self.exo_prices.fossil_prices
+        elec_df = self.exo_prices.electricity_prices
+
+        # Fossil fuel sectors
+        if fossil_df is not None:
+            for industry_name, cims_row in self.exo_prices.fossil_sector_rows.items():
+                ratio = self._normalised_price_path(cims_row, fossil_df, current_time)
+                for idx in self._indices_for(industry_name):
+                    price[idx] = base_prices[idx] * ratio
+
+        # Petroleum crude (special series not in the fossil fuel CSV)
+        if self.exo_prices.petroleum_crude_sector and self.exo_prices.petroleum_crude_data:
+            initial_year = self.exo_prices.initial_year
+            data = self.exo_prices.petroleum_crude_data
+            fn = interp1d(data["years"], data["prices"])
+            yr = initial_year + current_time // 4 + current_time % 4 / 4 - 0.25
+            ratio = float(fn(yr)) / float(fn(initial_year))
+            for idx in self._indices_for(self.exo_prices.petroleum_crude_sector):
+                price[idx] = base_prices[idx] * ratio
+
+        # Electricity sectors
+        if elec_df is not None:
+            for industry_name, cims_row in self.exo_prices.electricity_sector_rows.items():
+                ratio = self._normalised_price_path(cims_row, elec_df, current_time)
+                for idx in self._indices_for(industry_name):
+                    price[idx] = base_prices[idx] * ratio
+
+        return price
 
 
 class ExogenousPriceSetter(PriceSetter):

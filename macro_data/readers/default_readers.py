@@ -41,6 +41,7 @@ from macro_data.readers.economic_data.policy_rates import PolicyRatesReader
 from macro_data.readers.economic_data.world_bank_reader import WorldBankReader
 from macro_data.readers.emission_fraction.emission_fraction_reader import EmissionsFractionReader
 from macro_data.readers.emissions.emissions_reader import EmissionsReader
+from macro_data.readers.exo_prices.exo_prices_reader import ExoPricesReader
 from macro_data.readers.icio_sea_matching import (
     add_investment_matrix_to_icio,
     get_investment_fractions,
@@ -110,6 +111,8 @@ class DataPaths:
     compustat_banks_path: Path
     emissions_path: Path
     emissions_fraction_path: Optional[Path] = None
+    exo_prices_fossil_path: Optional[Path] = None
+    exo_prices_elec_path: Optional[Path] = None
 
     @classmethod
     def default_paths(cls, raw_data_path: Path, icio_years: Iterable[int]):
@@ -143,6 +146,8 @@ class DataPaths:
             compustat_banks_path=raw_data_path / "compustat" / "banks.csv",
             emissions_path=raw_data_path / "emissions",
             emissions_fraction_path=raw_data_path / "emission_factors",
+            exo_prices_fossil_path=raw_data_path / "cims_prices" / "fuels_CIMS.csv",
+            exo_prices_elec_path=raw_data_path / "cims_prices" / "CIMS_exogenous_prices.csv",
         )
 
     # @classmethod
@@ -197,6 +202,7 @@ class DataReaders:
     compustat_banks: CompustatBanksReader
     emissions: EmissionsReader
     emission_fractions: Optional[EmissionsFractionReader] = None
+    exo_prices: Optional[ExoPricesReader] = None
     regions_dict: Optional[dict[Country, list[Region]]] = None
 
     @classmethod
@@ -464,6 +470,16 @@ class DataReaders:
         if datapaths.emissions_fraction_path is not None and datapaths.emissions_fraction_path.exists():
             emission_fractions = EmissionsFractionReader.read_fraction_data(datapaths.emissions_fraction_path)
 
+        exo_prices = None
+        if (
+            datapaths.exo_prices_fossil_path is not None
+            and datapaths.exo_prices_fossil_path.exists()
+        ):
+            exo_prices = ExoPricesReader.read_from_raw_data(
+                fossil_prices_path=datapaths.exo_prices_fossil_path,
+                electricity_prices_path=datapaths.exo_prices_elec_path,
+            )
+
         return cls(
             icio=icio,
             wiod_sea=wiod_sea,
@@ -481,6 +497,7 @@ class DataReaders:
             compustat_banks=compustat_banks,
             emissions=emissions,
             emission_fractions=emission_fractions,
+            exo_prices=exo_prices,
             regions_dict=regions_dict,
         )
 

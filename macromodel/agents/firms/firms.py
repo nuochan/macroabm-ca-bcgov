@@ -7,6 +7,7 @@ import pandas as pd
 
 from macro_data import SyntheticFirms
 from macro_data.readers.emission_fraction.emission_fraction_reader import EmissionFractions
+from macro_data.readers.exo_prices import ExoPrices
 from macromodel.agents.agent import Agent
 from macromodel.agents.firms.firm_ts import FirmTimeSeries
 from macromodel.agents.firms.utils.create_bundle_matrix import create_bundle_matrix
@@ -186,6 +187,7 @@ class Firms(Agent):
         industries: list[str],
         add_emissions: bool = False,
         emission_fractions: Optional[EmissionFractions] = None,
+        exo_prices: Optional[ExoPrices] = None,
     ):
         """Create a Firms instance from pickled synthetic data.
 
@@ -206,7 +208,13 @@ class Firms(Agent):
         Returns:
             Firms: Initialized Firms instance
         """
+        from macromodel.agents.firms.func.prices import ExoEnergyExogenousPriceSetter
+
         functions = functions_from_model(model=configuration.functions, loc="macromodel.agents.firms")
+
+        if isinstance(functions.get("prices"), ExoEnergyExogenousPriceSetter) and exo_prices is not None:
+            functions["prices"].exo_prices = exo_prices
+            functions["prices"].industries = industries
 
         intermediate_inputs_productivity_matrix = synthetic_firms.intermediate_inputs_productivity_matrix
         capital_inputs_productivity_matrix = synthetic_firms.capital_inputs_productivity_matrix
