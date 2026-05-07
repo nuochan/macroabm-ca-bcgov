@@ -326,6 +326,11 @@ class SyntheticCountry:
             emission_factors_array=emission_factors_array,
         )
 
+        if readers.emission_fractions is not None:
+            emission_fractions = EmissionFractions.from_reader(readers.emission_fractions)
+        else:
+            emission_fractions = None
+
         return cls(
             population=population,
             firms=firms,
@@ -349,11 +354,7 @@ class SyntheticCountry:
             consumption_weights_by_income=weights_by_income,
             synthetic_goods_market=synthetic_goods_market,
             emission_factors=emission_factors,
-            emission_fractions=(
-                EmissionFractions.from_reader(readers.emission_fractions)
-                if readers.emission_fractions is not None
-                else None
-            ),
+            emission_fractions=emission_fractions,
         )
 
     @classmethod
@@ -521,6 +522,11 @@ class SyntheticCountry:
             emission_factors_array=emission_factors_array,
         )
 
+        if readers.emission_fractions is not None:
+            emission_fractions = EmissionFractions.from_reader(readers.emission_fractions)
+        else:
+            emission_fractions = None
+
         return cls(
             population=population,
             firms=firms,
@@ -544,11 +550,7 @@ class SyntheticCountry:
             consumption_weights_by_income=weights_by_income,
             synthetic_goods_market=synthetic_goods_market,
             emission_factors=emission_factors,
-            emission_fractions=(
-                EmissionFractions.from_reader(readers.emission_fractions)
-                if readers.emission_fractions is not None
-                else None
-            ),
+            emission_fractions=emission_fractions,
         )
 
     @classmethod
