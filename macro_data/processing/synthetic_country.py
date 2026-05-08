@@ -545,6 +545,22 @@ class SyntheticCountry:
         else:
             emission_fractions = None
 
+        if readers.ch4_emissions is not None and emission_factors is not None:
+            production_by_industry = (
+                firms.firm_data.groupby("Industry")["Production"]
+                .sum()
+                .reindex(range(len(industries)), fill_value=0.0)
+                .values
+            )
+            emission_factors_ch4 = CH4EmissionsDataCAN.from_reader(
+                reader=readers.ch4_emissions,
+                industries=industries,
+                production_by_industry=production_by_industry,
+                year=year,
+            )
+        else:
+            emission_factors_ch4 = None
+
         return cls(
             population=population,
             firms=firms,
@@ -569,6 +585,7 @@ class SyntheticCountry:
             synthetic_goods_market=synthetic_goods_market,
             emission_factors=emission_factors,
             emission_fractions=emission_fractions,
+            emission_factors_ch4=emission_factors_ch4,
         )
 
     @classmethod
