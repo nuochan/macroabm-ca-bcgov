@@ -2,12 +2,15 @@
 
 Usage:
     uv run python run_simulation.py                    # France (default)
+    uv run python run_simulation.py DEU                # Germany (EU - no proxy needed)
     uv run python run_simulation.py CAN                # Canada (auto-uses FRA as proxy)
     uv run python run_simulation.py USA --proxy FRA    # USA with France as proxy
-    uv run python run_simulation.py CAN --proxy FRA --scale 5000  # Custom scale
+    uv run python run_simulation.py GBR --proxy DEU    # UK with Germany as proxy
+    uv run python run_simulation.py CAN --scale 5000   # Custom scale
 """
 import argparse
 import sys
+import time
 from pathlib import Path
 
 from macro_data import DataWrapper
@@ -16,7 +19,23 @@ from macromodel.configurations import CountryConfiguration, SimulationConfigurat
 from macromodel.simulation import Simulation
 
 
+def format_duration(seconds: float) -> str:
+    """Format duration in human-readable form."""
+    if seconds < 60:
+        return f"{seconds:.2f}s"
+    elif seconds < 3600:
+        minutes = int(seconds // 60)
+        secs = seconds % 60
+        return f"{minutes}m {secs:.1f}s"
+    else:
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        return f"{hours}h {minutes}m"
+
+
 def main():
+    total_start = time.perf_counter()
+    
     parser = argparse.ArgumentParser(description="Run macroeconomic simulation for a country.")
     parser.add_argument("country", nargs="?", default="FRA", help="Country code (default: FRA)")
     parser.add_argument("--proxy", default=None, help="Proxy country for non-EU countries (default: FRA for non-EU)")
@@ -36,7 +55,12 @@ def main():
     output_dir.mkdir(exist_ok=True)
 
     # Determine if country needs proxy (non-EU countries)
-    eu_countries = {"FRA", "DEU", "ITA", "ESP", "NLD", "BEL", "AUT", "FIN", "IRL", "PRT", "GRC", "SVK", "SVN", "EST", "LVA", "LTU", "LUX", "MLT", "CYP"}
+    # EU28 countries as of 2014 (includes UK which was still EU member)
+    eu_countries = {
+        "AUT", "BEL", "BGR", "HRV", "CYP", "CZE", "DNK", "EST", "FIN", "FRA",
+        "DEU", "GRC", "HUN", "IRL", "ITA", "LVA", "LTU", "LUX", "MLT", "NLD",
+        "POL", "PRT", "ROU", "SVK", "SVN", "ESP", "SWE", "GBR"
+    }
     
     needs_proxy = country not in eu_countries
     proxy_country = proxy or ("FRA" if needs_proxy else None)
@@ -65,6 +89,7 @@ def main():
 
     # 1. Data preprocessing
     print("\n[1/4] Preprocessing data...")
+    step_start = time.perf_counter()
     data_config = default_data_configuration(
         countries=[country],
         proxy_country_dict=proxy_dict if proxy_dict else None,
@@ -74,9 +99,11 @@ def main():
         aggregate_industries=not use_disagg_can,  # Canada disagg needs non-aggregated
     )
     datawrapper = DataWrapper.from_config(data_config, raw_data, single_hfcs_survey=True)
-    print(f"  Created {datawrapper.n_industries} industries")
+    step_elapsed = time.perf_counter() - step_start
+    print(f"  Created {datawrapper.n_industries} industries in {format_duration(step_elapsed)}")
 
     # 2. Simulation configuration
+    step_start = time.perf_counter()
     print("\n[2/4] Configuring simulation...")
     n_industries = datawrapper.n_industries
     
@@ -91,15 +118,20 @@ def main():
         t_max=args.t_max,
         seed=args.seed,
     )
+    step_elapsed = time.perf_counter() - step_start
+    print(f"  Configuration complete in {format_duration(step_elapsed)}")
 
     # 3. Run simulation
     print("\n[3/4] Running simulation...")
+    step_start = time.perf_counter()
     simulation = Simulation.from_datawrapper(
         datawrapper=datawrapper, 
         simulation_configuration=sim_config
     )
     simulation.run()
-    print("  Simulation complete!")
+    step_elapsed = time.perf_counter() - step_start
+    print(f"  Simulation complete in {format_duration(step_elapsed)}")
+    print(f"  Average per timestep: {step_elapsed / args.t_max:.2f}s")
 
     # 4. Save results
     print("\n[4/4] Saving results...")
@@ -116,6 +148,11 @@ def main():
     results = simulation.shallow_df_dict()
     print(f"\n=== Summary for {country} ===")
     print(results[country].head())
+
+    # Final timing
+    total_elapsed = time.perf_counter() - total_start
+    print(f"\n=== Timing Summary ===")
+    print(f"  Total elapsed: {format_duration(total_elapsed)}")
 
     return 0
 
