@@ -28,3 +28,4 @@ print(results["FRA"].head())
 # 4. Save
 OUTPUT.mkdir(exist_ok=True)
 simulation.save(save_dir=OUTPUT, file_name="sim_fra.h5")
+simulation.shallow_hdf_save(save_dir=OUTPUT, file_name="sim_fra_shallow.h5")
