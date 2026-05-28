@@ -25,6 +25,10 @@ def gini_coefficient(x):
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# Default scale factor — each synthetic agent represents this many real people/households.
+# Set by the `scale` parameter in `default_data_configuration()` (default: 10,000).
+SCALE = 10_000
+
 # --- Parse command line ---
 COUNTRY = sys.argv[1] if len(sys.argv) > 1 else "FRA"
 custom_h5 = sys.argv[2] if len(sys.argv) > 2 else None
@@ -56,6 +60,8 @@ with h5py.File(H5_PATH, "r") as f:
     ind_emp_income = ind["employee_income"][0]
 
     print(f"\n===== INDIVIDUAL INCOME (initial state) =====")
+    print(f"  NOTE: Each synthetic individual agent represents ~{SCALE:,} real people.")
+    print(f"  All income values are aggregated at the synthetic-agent level, not per-capita.")
     print(f"  N = {len(ind_income):,} individuals")
     print(f"  Mean:   {ind_income.mean():,.6f}")
     print(f"  Median: {np.median(ind_income):,.6f}")
@@ -76,6 +82,7 @@ with h5py.File(H5_PATH, "r") as f:
     hh_income = hh["income"][0]
 
     print(f"\n===== HOUSEHOLD INCOME (initial state) =====")
+    print(f"  NOTE: Each synthetic household represents ~{SCALE:,} real households.")
     print(f"  N = {len(hh_income):,} households")
     print(f"  Mean:   {hh_income.mean():,.6f}")
     print(f"  Median: {np.median(hh_income):,.6f}")
@@ -110,7 +117,7 @@ pos_income = ind_income[ind_income > 0]
 log_bins = np.logspace(np.log10(pos_income.min()), np.log10(pos_income.max()), 50)
 ax.hist(pos_income, bins=log_bins, edgecolor="white", alpha=0.7)
 ax.set_xscale("log")
-ax.set_xlabel("Income (log scale)")
+ax.set_xlabel(f"Income — log scale (1 agent ≈ {SCALE:,} people)")
 ax.set_ylabel("Number of Individuals")
 ax.set_title(f"Individual Income — {COUNTRY} (initial state)")
 ax.axvline(np.median(ind_income), color="red", linestyle="--", label=f"Median: {np.median(ind_income):.4f}")
@@ -154,7 +161,7 @@ pos_hh = hh_income[hh_income > 0]
 log_bins_h = np.logspace(np.log10(pos_hh.min()), np.log10(pos_hh.max()), 50)
 ax.hist(pos_hh, bins=log_bins_h, edgecolor="white", alpha=0.7, color="orange")
 ax.set_xscale("log")
-ax.set_xlabel("Income (log scale)")
+ax.set_xlabel(f"Income — log scale (1 agent ≈ {SCALE:,} households)")
 ax.set_ylabel("Number of Households")
 ax.set_title(f"Household Income — {COUNTRY} (initial state)")
 ax.axvline(np.median(hh_income), color="red", linestyle="--", label=f"Median: {np.median(hh_income):,.4f}")
