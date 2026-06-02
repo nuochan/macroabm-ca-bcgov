@@ -1,10 +1,31 @@
-name: Run Canada and France simulations
+name: Run simulation
 
 on:
-  workflow_dispatch:          # manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      country:
+        description: "Country to simulate"
+        required: true
+        type: choice
+        default: "FRA"
+        options:
+          - FRA
+          - CAN
+          - CAN_BC
+      t_max:
+        description: "Number of timesteps"
+        required: false
+        type: number
+        default: 20
+      scale:
+        description: "Scale factor"
+        required: false
+        type: number
+        default: 10000
   push:
     branches:
       - main
+      - pit_func
     paths:
       - "macromodel/**"
       - "macro_data/**"
@@ -23,7 +44,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-        country: [CAN, FRA]
+        country: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["__manual__"]') || fromJSON('["CAN","FRA"]') }}
 
     steps:
       - uses: actions/checkout@v4
@@ -45,23 +66,58 @@ jobs:
       - name: Install project dependencies
         run: uv sync --python ${{ matrix.python-version }} --extra dev
 
-      - name: Run ${{ matrix.country }} simulation
-        run: uv run python test_run/run_simulation.py ${{ matrix.country }}
+      # ── Determine target ──────────────────────────────────────────
+      - name: Set simulation target
+        id: target
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "country=${{ github.event.inputs.country }}" >> $GITHUB_OUTPUT
+            echo "t_max=${{ github.event.inputs.t_max }}" >> $GITHUB_OUTPUT
+            echo "scale=${{ github.event.inputs.scale }}" >> $GITHUB_OUTPUT
+          else
+            echo "country=${{ matrix.country }}" >> $GITHUB_OUTPUT
+            echo "t_max=20" >> $GITHUB_OUTPUT
+            echo "scale=10000" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Inspect income for ${{ matrix.country }}
-        run: uv run python test_run/inspect_income.py ${{ matrix.country }}
+      # ── CAN_BC: run CAN baseline first ───────────────────────────
+      - name: [CAN_BC] Run CAN baseline simulation
+        if: steps.target.outputs.country == 'CAN_BC'
+        run: uv run python test_run/run_simulation.py CAN --t-max ${{ steps.target.outputs.t_max }} --scale ${{ steps.target.outputs.scale }}
 
-      - name: Generate summary and visualizations for ${{ matrix.country }}
-        run: uv run python test_run/summary_and_viz.py ${{ matrix.country }}
+      - name: [CAN_BC] Inspect CAN income
+        if: steps.target.outputs.country == 'CAN_BC'
+        run: uv run python test_run/inspect_income.py CAN
 
+      - name: [CAN_BC] Summarize CAN
+        if: steps.target.outputs.country == 'CAN_BC'
+        run: uv run python test_run/summary_and_viz.py CAN
+
+      # ── Run requested simulation ──────────────────────────────────
+      - name: Run ${{ steps.target.outputs.country }} simulation
+        run: uv run python test_run/run_simulation.py ${{ steps.target.outputs.country }} --t-max ${{ steps.target.outputs.t_max }} --scale ${{ steps.target.outputs.scale }}
+
+      - name: Inspect income for ${{ steps.target.outputs.country }}
+        run: uv run python test_run/inspect_income.py ${{ steps.target.outputs.country }}
+
+      - name: Summarize ${{ steps.target.outputs.country }}
+        run: uv run python test_run/summary_and_viz.py ${{ steps.target.outputs.country }}
+
+      # ── CAN_BC: compare ───────────────────────────────────────────
+      - name: [CAN_BC] Compare progressive vs flat tax
+        if: steps.target.outputs.country == 'CAN_BC'
+        run: uv run python test_run/compare_can_bc.py --no-run --t-max ${{ steps.target.outputs.t_max }}
+
+      # ── Upload ────────────────────────────────────────────────────
       - name: List output
         if: always()
         run: ls -lah output/
 
-      - name: Upload simulation output
+      - name: Upload simulation artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.country }}-simulation-output
+          name: ${{ steps.target.outputs.country }}-simulation-output
           path: output/
           retention-days: 7
