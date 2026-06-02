@@ -1,4 +1,4 @@
-"""Unified simulation runner for any country.
+"""Unified simulation runner for any country or subnational region.
 
 Usage:
     uv run python run_simulation.py                    # France (default)
@@ -8,6 +8,12 @@ Usage:
     uv run python run_simulation.py USA --proxy FRA    # USA with France as proxy
     uv run python run_simulation.py GBR --proxy DEU    # UK with Germany as proxy
     uv run python run_simulation.py CAN --scale 5000   # Custom scale
+    uv run python run_simulation.py CAN_BC             # British Columbia (auto progressive PIT)
+    uv run python run_simulation.py CAN_ON --scale 2000
+
+CAN_BC automatically activates BC's progressive personal income tax
+schedule from ``spoof_data/freda/BC_PIT_2014.csv`` with compound
+CPI inflation indexing.
 """
 import argparse
 import sys
@@ -16,7 +22,9 @@ from pathlib import Path
 
 from macro_data import DataWrapper
 from macro_data.configuration_utils import default_data_configuration
+from macro_data.readers.taxation.personal_income_tax.pit_schedule import PITSchedule
 from macromodel.configurations import CountryConfiguration, SimulationConfiguration
+from macromodel.configurations.central_government_configuration import CentralGovernmentConfiguration
 from macromodel.simulation import Simulation
 
 
@@ -49,6 +57,10 @@ def main():
     country = args.country.upper()
     proxy = args.proxy.upper() if args.proxy else None
 
+    # Detect region codes (e.g. "CAN_BC" → parent "CAN")
+    is_region = "_" in country
+    parent_country = country.split("_")[0] if is_region else country
+
     # Resolve paths
     repo_root = Path(__file__).resolve().parent.parent
     raw_data = repo_root / "tests/test_macro_data/unit/sample_raw_data"
@@ -63,10 +75,12 @@ def main():
         "POL", "PRT", "ROU", "SVK", "SVN", "ESP", "SWE", "GBR"
     }
     
-    needs_proxy = country not in eu_countries
+    needs_proxy = parent_country not in eu_countries
     proxy_country = proxy or ("FRA" if needs_proxy else None)
 
     print(f"=== Running simulation for {country} ===")
+    if is_region:
+        print(f"  Region of: {parent_country}")
     print(f"  Scale: {args.scale:,}")
     print(f"  Timesteps: {args.t_max}")
     print(f"  Seed: {args.seed}")
@@ -76,12 +90,15 @@ def main():
     else:
         print(f"  Proxy country: {proxy_country or 'None (EU country)'}")
 
-    # Build proxy dict if needed
-    proxy_dict = {country: proxy_country} if proxy_country and needs_proxy else {}
+    # Build proxy dict — keyed by parent country
+    if proxy_country and needs_proxy:
+        proxy_dict = {parent_country: proxy_country}
+    else:
+        proxy_dict = {}
 
-    # Special handling for Canada
-    is_canada = country == "CAN"
-    use_disagg_can = is_canada and proxy_country in eu_countries
+    # Special handling for Canada disaggregated energy reader
+    is_canada = parent_country == "CAN"
+    use_disagg_can = is_canada and not is_region and proxy_country in eu_countries
 
     if is_canada and not use_disagg_can:
         print("  Note: Using standard Canada configuration")
@@ -91,14 +108,33 @@ def main():
     # 1. Data preprocessing
     print("\n[1/4] Preprocessing data...")
     step_start = time.perf_counter()
-    data_config = default_data_configuration(
-        countries=[country],
-        proxy_country_dict=proxy_dict if proxy_dict else None,
-        scale={country: args.scale},
-        seed=args.seed,
-        use_disagg_can_2014_reader=use_disagg_can,
-        aggregate_industries=not use_disagg_can,  # Canada disagg needs non-aggregated
-    )
+    
+    if is_region:
+        # ── Subnational region path ──
+        # For a single region, run the parent country but label output
+        # with the region name.  Multi-region provincial simulations
+        # require the full aggregation_structure + provincial reader
+        # pipeline (see conftest examples).
+        print(f"  Running as parent country {parent_country} (region label: {country})")
+        data_config = default_data_configuration(
+            countries=[parent_country],
+            proxy_country_dict=proxy_dict if proxy_dict else None,
+            scale={parent_country: args.scale},
+            seed=args.seed,
+            use_disagg_can_2014_reader=use_disagg_can,
+            aggregate_industries=not use_disagg_can,
+        )
+    else:
+        # ── Country path (backward compatible) ──
+        data_config = default_data_configuration(
+            countries=[country],
+            proxy_country_dict=proxy_dict if proxy_dict else None,
+            scale={country: args.scale},
+            seed=args.seed,
+            use_disagg_can_2014_reader=use_disagg_can,
+            aggregate_industries=not use_disagg_can,
+        )
+
     datawrapper = DataWrapper.from_config(data_config, raw_data, single_hfcs_survey=True)
     step_elapsed = time.perf_counter() - step_start
     print(f"  Created {datawrapper.n_industries} industries in {format_duration(step_elapsed)}")
@@ -107,15 +143,34 @@ def main():
     step_start = time.perf_counter()
     print("\n[2/4] Configuring simulation...")
     n_industries = datawrapper.n_industries
-    
+
     if use_disagg_can:
-        # Canada needs special industry configuration
         country_config = CountryConfiguration.n_industry_default(n_industries=n_industries)
     else:
         country_config = CountryConfiguration()
 
+    # ── Progressive PIT (auto-activated for CAN_BC) ────────────
+    if country == "CAN_BC":
+        print(f"\n  Activating BC progressive PIT schedule ...")
+        schedule = PITSchedule.from_name("BC_PIT_2014.csv")
+        print(f"  PIT base year: {schedule.base_year}, CPI years: {sorted(schedule.cpi_map)}")
+        thresholds, rates, _, _ = schedule.get_brackets(tax_year=schedule.base_year)
+
+        brackets = [(float(thresholds[i]), float(rates[i])) for i in range(len(thresholds))]
+        country_config.central_government = CentralGovernmentConfiguration(
+            pit_brackets=brackets,
+            functions=country_config.central_government.functions,
+        )
+        print(f"  Progressive PIT: {len(brackets)} brackets")
+        for i, (thresh, rate) in enumerate(brackets):
+            print(f"    Bracket {i+1}: up to {thresh:>12,.0f} @ {rate:.1%}")
+
+    # For the region path, the datawrapper only has the parent country
+    # but we label output files with the region name.
+    sim_key = parent_country if is_region else country
+
     sim_config = SimulationConfiguration(
-        country_configurations={country: country_config},
+        country_configurations={sim_key: country_config},
         t_max=args.t_max,
         seed=args.seed,
     )
@@ -145,10 +200,14 @@ def main():
     print(f"  Full output: {sim_file}")
     print(f"  Shallow output: {shallow_file}")
 
-    # Print summary
+    # Print summary — use parent_country for region runs
     results = simulation.shallow_df_dict()
+    summary_key = parent_country if is_region else country
     print(f"\n=== Summary for {country} ===")
-    print(results[country].head())
+    if summary_key in results:
+        print(results[summary_key].head())
+    else:
+        print(f"  (No summary for '{summary_key}'; available: {sorted(results.keys())})")
 
     # Final timing
     total_elapsed = time.perf_counter() - total_start

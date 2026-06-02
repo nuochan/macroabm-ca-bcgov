@@ -1454,6 +1454,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "stats-can" },
 ]
 docs = [
     { name = "mike" },
@@ -1502,6 +1503,7 @@ requires-dist = [
     { name = "scipy" },
     { name = "setuptools" },
     { name = "skops" },
+    { name = "stats-can", marker = "extra == 'dev'" },
     { name = "statsmodels" },
     { name = "strenum" },
     { name = "tables" },
@@ -3417,6 +3419,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/28/e3/55dcc2cfbc3ca9c29519eb6884dd1415ecb53b0e934862d3559ddcb7e20b/stack_data-0.6.3.tar.gz", hash = "sha256:836a778de4fec4dcd1dcd89ed8abff8a221f58308462e1c4aa2a3cf30148f0b9", size = 44707, upload-time = "2023-09-30T13:58:05.479Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/7b/ce1eafaf1a76852e2ec9b22edecf1daa58175c090266e9f6c64afcd81d91/stack_data-0.6.3-py3-none-any.whl", hash = "sha256:d5558e0c25a4cb0853cddad3d77da9891a08cb85dd9f9f91b9f8cd66e511e695", size = 24521, upload-time = "2023-09-30T13:58:03.53Z" },
+]
+
+[[package]]
+name = "stats-can"
+version = "3.2.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pydantic" },
+    { name = "requests" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cf/53/0786cb4cb18a53578813f2f2b7cbb15129678cdfcc4ab7fc72fb9b845adb/stats_can-3.2.3.tar.gz", hash = "sha256:7593aa775334915b44b8b7aebc3ecf8a735669462bc48b6f32710df7bb3dbb8e", size = 23165, upload-time = "2026-04-14T15:05:33.238Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/c0/a1fd7bdb6f716456dbc668de47f0c7ec48b6e1eae0a0ea307d02c7e8e0b7/stats_can-3.2.3-py3-none-any.whl", hash = "sha256:ed881c9bc8c84723e3b5058dbc45864176bfdb37a76e495bbfeae846a104d0c4", size = 24453, upload-time = "2026-04-14T15:05:32.173Z" },
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SocialBenefits(BaseModel):
@@ -24,3 +24,19 @@ class CentralGovernmentFunctions(BaseModel):
 
 class CentralGovernmentConfiguration(BaseModel):
     functions: CentralGovernmentFunctions = CentralGovernmentFunctions()
+
+    # Progressive Personal Income Tax schedule.
+    # Each tuple is (bracket_upper_bound, marginal_rate).
+    # The last bound should be float("inf") for the top bracket.
+    # When None (default), the flat ``Income Tax`` scalar is used for
+    # both behavioural decisions and government revenue (backward
+    # compatible).  When set, revenue is computed progressively on
+    # employee income while wage-setting and after-tax income
+    # calculations continue to use the scalar ``Income Tax`` effective
+    # rate (which is updated each period to actual / taxable base).
+    pit_brackets: Optional[list[tuple[float, float]]] = Field(
+        default=None,
+        description="Progressive PIT brackets as (upper_bound, marginal_rate). "
+        "None means use the flat Income Tax rate.",
+    )
+
