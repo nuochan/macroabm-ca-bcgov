@@ -57,6 +57,7 @@ from macromodel.markets.housing_market.housing_market import HousingMarket
 from macromodel.markets.labour_market.labour_market import LabourMarket
 from macromodel.rest_of_the_world import RestOfTheWorld
 from macromodel.util.get_histogram import get_histogram
+from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_progressive_tax
 
 
 class Country:
@@ -319,6 +320,18 @@ class Country:
 
         n_unemployed = (individuals.states["Activity Status"] == ActivityStatus.UNEMPLOYED).sum()
 
+        # Scale PIT bracket thresholds to agent-level income units.
+        # Each synthetic agent represents *scale* real people, so a
+        # $50k bracket for individuals becomes $50k × scale for agents.
+        if (
+            country_configuration.central_government.pit_brackets is not None
+            and scale > 1
+        ):
+            country_configuration.central_government.pit_brackets = [
+                (threshold * scale, rate)
+                for threshold, rate in country_configuration.central_government.pit_brackets
+            ]
+
         central_government = CentralGovernment.from_pickled_agent(
             synthetic_central_government=synthetic_country.central_government,
             configuration=country_configuration.central_government,
@@ -329,6 +342,25 @@ class Country:
             tax_data=synthetic_country.tax_data,
             n_industries=n_industries,
         )
+
+        # --- Progressive PIT: pre-calibrate the effective rate ---
+        # When a progressive schedule is configured, compute the
+        # implied effective tax rate on the synthetic employee income
+        # distribution and overwrite states["Income Tax"].  This ensures
+        # that the very first period's wage-setting, after-tax income,
+        # and rental income calculations use the schedule-consistent
+        # rate rather than the raw OECD average — eliminating a
+        # calibration shock at t=0.
+        pit_thresholds = central_government.states.get("pit_thresholds")
+        pit_rates = central_government.states.get("pit_rates")
+        if pit_thresholds is not None and pit_rates is not None:
+            initial_taxable = individuals.states["Employee Income"] * (
+                1 - central_government.states["Employee Social Insurance Tax"]
+            )
+            pit_per_ind = compute_progressive_tax(initial_taxable, pit_thresholds, pit_rates)
+            total_base = initial_taxable.sum()
+            if total_base > 0:
+                central_government.states["Income Tax"] = float(pit_per_ind.sum() / total_base)
 
         government_entities = GovernmentEntities.from_pickled_agent(
             synthetic_government_entities=synthetic_country.government_entities,

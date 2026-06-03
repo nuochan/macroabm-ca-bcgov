@@ -3,6 +3,7 @@
 Usage:
     python summary_and_viz.py                     # uses output/sim_fra_shallow.h5
     python summary_and_viz.py CAN                 # uses output/sim_can_shallow.h5
+    python summary_and_viz.py CAN_BC              # British Columbia (region)
     python summary_and_viz.py FRA path/to/file.h5
 
 The script writes a CSV with the summary table and PNG plots to the chosen
@@ -119,6 +120,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     country = args.country.upper()
+    # Region codes (CAN_BC) store data under the parent key in the HDF5.
+    hdf5_group = country.split("_")[0] if "_" in country else country
+
     if args.h5_file:
         h5_path = Path(args.h5_file)
     else:
@@ -128,12 +132,12 @@ def main(argv=None):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        summary_df, industries_df = load_shallow(h5_path, country)
+        summary_df, industries_df = load_shallow(h5_path, hdf5_group)
     except Exception as e:
         print(f"Error loading HDF5: {e}")
         return 2
 
-    print(f"Loaded summary for {country} — shape: {summary_df.shape}")
+    print(f"Loaded summary for {country} (HDF5 key: {hdf5_group}) — shape: {summary_df.shape}")
 
     csv_path = save_csv(summary_df, out_dir, country)
     print(f"Saved CSV: {csv_path}")

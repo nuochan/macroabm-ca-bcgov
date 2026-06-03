@@ -28,6 +28,7 @@ from macromodel.agents.individuals.individual_properties import ActivityStatus
 from macromodel.configurations import CentralGovernmentConfiguration
 from macromodel.timeseries import TimeSeries
 from macromodel.util.function_mapping import functions_from_model, update_functions
+from macro_data.readers.taxation.personal_income_tax.pit_schedule import compute_progressive_tax
 
 
 class CentralGovernment(Agent):
@@ -129,6 +130,13 @@ class CentralGovernment(Agent):
             "unemployment_benefits_model": synthetic_central_government.unemployment_benefits_model,
             "other_benefits_model": synthetic_central_government.other_benefits_model,
         }
+
+        # Progressive PIT schedule (optional — None means use flat Income Tax).
+        # Activated for any country/region whose config sets pit_brackets.
+        if configuration.pit_brackets is not None:
+            brackets = np.array(configuration.pit_brackets, dtype=float)
+            states["pit_thresholds"] = brackets[:, 0]
+            states["pit_rates"] = brackets[:, 1]
 
         data = (synthetic_central_government.central_gov_data.astype(float)).rename_axis("Central Government ID")
 
@@ -303,18 +311,48 @@ class CentralGovernment(Agent):
         # Taxes on exports
         self.ts.taxes_exports.append([self.states["Export Tax"] * current_total_exports])
 
-        # Total wages of employed individuals
+        # Total wages of employed individuals (after Employee SI deduction —
+        # this is the standard taxable base for personal income tax)
         tot_wages_employed_ind = np.sum([current_ind_employee_income[current_ind_activity == ActivityStatus.EMPLOYED]])
 
-        # Taxes on income
-        self.ts.taxes_income.append(
-            [
+        # Personal income tax: progressive on employee earnings when a
+        # schedule is configured, otherwise flat on all income components.
+        pit_thresholds = self.states.get("pit_thresholds")
+        pit_rates = self.states.get("pit_rates")
+
+        if pit_thresholds is not None and pit_rates is not None:
+            # --- Progressive PIT on employee income ---
+            taxable_wages = current_ind_employee_income * (1 - self.states["Employee Social Insurance Tax"])
+            pit_per_individual = compute_progressive_tax(taxable_wages, pit_thresholds, pit_rates)
+            wage_tax_revenue = pit_per_individual.sum()
+
+            # Rental and financial income remain taxed at the flat effective rate
+            rental_tax_revenue = self.states["Income Tax"] * current_total_rent_paid
+            financial_tax_revenue = self.states["Income Tax"] * current_income_financial_assets.sum()
+
+            total_income_tax = wage_tax_revenue + rental_tax_revenue + financial_tax_revenue
+
+            # Update the scalar effective rate so that behavioural decisions
+            # (wage-setting, after-tax income, rental income) stay aligned
+            # with the progressive schedule.
+            total_taxable_base = (
+                (1 - self.states["Employee Social Insurance Tax"]) * tot_wages_employed_ind
+                + current_total_rent_paid
+                + current_income_financial_assets.sum()
+            )
+            if total_taxable_base > 0:
+                self.states["Income Tax"] = float(total_income_tax / total_taxable_base)
+        else:
+            # --- Flat tax (backward-compatible path) ---
+            total_income_tax = (
                 self.states["Income Tax"] * (1 - self.states["Employee Social Insurance Tax"]) * tot_wages_employed_ind
                 + self.states["Income Tax"] * current_total_rent_paid
-                + self.states["Income Tax"] * current_income_financial_assets.sum(),
-            ]
-        )
-        self.ts.taxes_rental_income.append([self.states["Income Tax"] * current_total_rent_paid])
+                + self.states["Income Tax"] * current_income_financial_assets.sum()
+            )
+            rental_tax_revenue = self.states["Income Tax"] * current_total_rent_paid
+
+        self.ts.taxes_income.append([total_income_tax])
+        self.ts.taxes_rental_income.append([rental_tax_revenue])
 
         # Taxes on employer social insurance
         self.ts.taxes_employer_si.append([self.states["Employer Social Insurance Tax"] * tot_wages_employed_ind])

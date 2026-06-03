@@ -41,6 +41,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "ruff",
+    "stats-can",
 ]
 docs = [
     "mkdocs",
