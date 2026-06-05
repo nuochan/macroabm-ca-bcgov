@@ -63,7 +63,9 @@ def main():
 
     # Resolve paths
     repo_root = Path(__file__).resolve().parent.parent
-    raw_data = repo_root / "tests/test_macro_data/unit/sample_raw_data"
+    raw_data_dir = repo_root / "raw_data"
+    sample_data_dir = repo_root / "tests/test_macro_data/unit/sample_raw_data"
+    raw_data = raw_data_dir if raw_data_dir.exists() else sample_data_dir
     output_dir = repo_root / args.output
     output_dir.mkdir(exist_ok=True)
 

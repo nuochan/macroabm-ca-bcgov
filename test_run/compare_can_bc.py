@@ -75,7 +75,9 @@ def run_simulation(country: str, args) -> tuple[Simulation, list[float]]:
     msg = "PIT ON" if upper == "CAN_BC" else "flat"
     print(f"  [{upper}] scale={args.scale:,}  t_max={args.t_max}  tax={msg}")
 
-    raw = REPO_ROOT / "tests/test_macro_data/unit/sample_raw_data"
+    raw_dir = REPO_ROOT / "raw_data"
+    sample_dir = REPO_ROOT / "tests/test_macro_data/unit/sample_raw_data"
+    raw = raw_dir if raw_dir.exists() else sample_dir
     dc = default_data_configuration(
         countries=[parent], proxy_country_dict=pdict or None,
         scale={parent: args.scale}, seed=args.seed,
