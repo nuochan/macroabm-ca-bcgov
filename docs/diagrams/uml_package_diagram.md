@@ -1,165 +1,110 @@
 # UML Demo: Package Diagram
 
-A **package diagram** showing the module-level dependency structure of the
-repository. This follows the recommendation of Collins et al. (2015) and
-Niazi & Hussain (2012) that ABM codebases benefit from a "table of contents"
-diagram before diving into per-class detail.
+This diagram shows the **module-level dependency structure** of the
+`macroabm-ca` codebase — a "table of contents" for the repository that
+no other UML diagram provides. Package diagrams were the most frequently
+recommended addition in the post-Bersini ABM/UML literature (Collins et al.
+2015; Niazi & Hussain 2012).
 
-Compare Bersini §1.4: *"UML provides a level of abstraction higher than that
-provided by OO programming languages."* The package diagram sits one level
-above the class diagram — it shows what depends on what *at the import level*.
-
-## Top-level packages
+Each box is a top-level Python package in this repo. Arrows indicate
+*pacakge dependency* (i.e., `A → B` means `A` imports from `B`).
 
 ```mermaid
 graph LR
-    md[macro_data]
-    mm[macromodel]
-    mc[macrocalib]
-    tests[tests]
+    subgraph external[External Python ecosystem]
+        numpy
+        pandas
+        h5py
+        numba
+        pydantic
+    end
 
-    md --> mm
-    mm --> mc
-    mm --> tests
-    mc --> tests
-```
-
-`macro_data` has zero dependencies on the other two — it is pure data
-preparation. `macromodel` depends on `macro_data` (it consumes the processed
-data). `macrocalib` depends on both (it runs `macromodel` simulations and
-trains on `macro_data`).
-
----
-
-## Full package structure
-
-```mermaid
-graph TB
-    subgraph macro_data["macro_data (data preparation)"]
+    subgraph repo[macroabm-ca]
         direction TB
-        md_conf[configuration]
-        md_read[readers]
-        md_proc[processing]
-        md_util[util]
-        md_dw[data_wrapper.py]
 
-        md_conf --> md_dw
-        md_read --> md_dw
-        md_proc --> md_dw
-        md_read --> md_proc
+        subgraph data[macro_data]
+            d_readers[readers]
+            d_process[processing]
+            d_cfg[configuration]
+            d_util[util]
+            dw[data_wrapper.py]
+        end
+
+        subgraph model[macromodel]
+            m_country[country]
+            m_agents[agents]
+            m_markets[markets]
+            m_econ[economy]
+            m_exo[exogenous]
+            m_ex[exchange_rates]
+            m_row[rest_of_the_world]
+            m_cfg[configurations]
+            m_ts[timeseries]
+            m_sim[simulation.py]
+        end
+
+        subgraph calib[macrocalib]
+            c_sampler[sampler]
+            c_train[training]
+        end
+
+        subgraph tests[tests]
+            t_data[test_macro_data]
+            t_model[test_macromodel]
+            t_calib[test_macrocalib]
+        end
     end
 
-    subgraph macromodel["macromodel (simulation engine)"]
-        direction TB
-        mm_agents[agents]
-        mm_markets[markets]
-        mm_country[country]
-        mm_econ[economy]
-        mm_sim[simulation.py]
-        mm_conf[configurations]
-        mm_er[exchange_rates]
-        mm_ts[timeseries.py]
-        mm_row[rest_of_the_world]
+    numpy --> model
+    numpy --> data
+    pandas --> model
+    pandas --> data
+    h5py --> model
+    numba --> model
+    pydantic --> model
 
-        mm_agents --> mm_country
-        mm_markets --> mm_country
-        mm_econ --> mm_country
-        mm_er --> mm_sim
-        mm_row --> mm_sim
-        mm_country --> mm_sim
-        mm_conf --> mm_agents
-        mm_conf --> mm_markets
-        mm_ts --> mm_agents
-        mm_ts --> mm_markets
-    end
+    d_readers --> d_util
+    dw --> d_readers
+    dw --> d_process
+    dw --> d_cfg
 
-    subgraph macrocalib["macrocalib (calibration)"]
-        direction TB
-        mc_samp[sampler]
-        mc_train[training]
+    m_agents --> model
+    m_markets --> model
+    m_country --> m_agents
+    m_country --> m_markets
+    m_country --> m_econ
+    m_country --> m_exo
+    m_country --> m_row
+    m_sim --> m_country
+    m_sim --> m_ex
+    m_sim --> m_row
+    m_cfg --> model
 
-        mc_samp --> mc_train
-    end
-
-    macro_data --> macromodel
-    macromodel --> macrocalib
-
-    subgraph tests["tests"]
-        direction LR
-        t_md[test_macro_data]
-        t_mm[test_macromodel]
-        t_mc[test_macrocalib]
-    end
-
-    macromodel --> tests
-    macrocalib --> tests
+    model --> data : depends on
+    calib --> model : trains against
+    calib --> data : uses
+    tests --> model
+    tests --> data
+    tests --> calib
 ```
 
----
+## Reading notes
 
-## Agent sub-packages (inside `macromodel.agents`)
+| Package | Role | Key dependencies |
+|---|---|---|
+| `macro_data` | Data ingestion, synthetic-country generation, configuration | `pandas`, `numpy` |
+| `macromodel` | Simulation engine: agents, markets, country orchestration | `macro_data`, `numpy`, `numba`, `h5py`, `pydantic` |
+| `macrocalib` | Calibration: sampling, training routines | `macromodel`, `macro_data` |
+| `tests` | Unit/integration tests for all three packages | All three |
 
-```mermaid
-graph LR
-    agent[agent]
-    firms[firms]
-    households[households]
-    individuals[individuals]
-    banks[banks]
-    central_bank[central_bank]
-    central_government[central_government]
-    government_entities[government_entities]
-
-    agent --> firms
-    agent --> households
-    agent --> individuals
-    agent --> banks
-    agent --> central_bank
-    agent --> central_government
-    agent --> government_entities
-```
-
-All agent types inherit from `macromodel.agents.agent.Agent`. There are no
-other cross-dependencies: agents interact only through markets and through
-the `Country` orchestrator, not by importing each other.
-
----
-
-## Market sub-packages (inside `macromodel.markets`)
-
-```mermaid
-graph LR
-    gm[goods_market]
-    cm[credit_market]
-    hm[housing_market]
-    lm[labour_market]
-
-    gm ~~~ cm ~~~ hm ~~~ lm
-```
-
-Markets are independent of each other — they are composed into `Country` and
-called in sequence. The global `GoodsMarket` is the only market that lives at
-the `Simulation` level (not per-country).
-
----
-
-## Why a package diagram?
-
-Bersini omitted it (§4.5: *"use case, component and deployment diagrams …
-should be of minor importance for most ABM modelling endeavours"*), but
-subsequent ABM-UML work (Niazi & Hussain 2012; Collins et al. 2015) argues
-that package diagrams are the **first diagram a new contributor needs** because:
-
-1. They answer "where is the code I need to touch?"
-2. They make circular-dependency violations visually obvious.
-3. They cost almost nothing to maintain — the package structure changes far
-   less often than class details.
-
-For a codebase of this size (25+ sub-packages), the package diagram is the
-single highest-value-per-pixel diagram you can draw.
+The diagram makes explicit what `pyproject.toml` declares via `[tool.setuptools.packages]`
+but doesn't visualize: `macromodel` is the central package; everything else
+either feeds data in or validates/calibrates the output.
 
 ## References
 
-- Collins, A. et al. (2015). *UML for agent-based modelling and simulation.*
-- Niazi, M. & Hussain, A. (2012). *Agent-based tools for modeling and
-  simulation.*
+- Collins, A., Petty, M., Vernon-Bido, D., & Sherfey, S. (2015). A Call to Arms:
+  Standards for Agent-Based Modeling and Simulation. *JASSS* 18(3)12.
+- Niazi, M. A., & Hussain, A. (2012). Cognitive Agent-based Computing-I: A
+  Unified Framework for Modeling Complex Adaptive Systems using Agent-based &
+  Complex Network-based Methods. Springer.

@@ -1,139 +1,105 @@
 # UML Demo: Use Case Diagram
 
-A **use case diagram** capturing the three primary user personas of this
-repository and how they interact with the system. Bersini omitted this diagram
-(§4.5: *"use case … should be of minor importance for most ABM modelling
-endeavours"*), but Kravari & Bassiliades (2015) and subsequent work argue
-that any ABM with multiple user roles benefits from distinguishing *who does
-what*.
+Bersini (2012, §4.5) dismissed use case diagrams as "of minor importance for
+most ABM modelling endeavours." However, Kravari & Bassiliades (2015) and
+Collins et al. (2015) pushed back, arguing that ABMs with **multiple user
+personas** benefit from explicitly documenting *who does what*.
 
-This repo has three distinct personas:
-
-| Persona | Goal | Primary entry point |
-|---|---|---|
-| **Data Engineer** | Prepare synthetic data from raw sources | `DataWrapper.from_config()` |
-| **Calibrator** | Tune model parameters to match empirical targets | `Sampler` / `train_model()` |
-| **Analyst** | Run scenarios and interpret outputs | `run_simulation.py` → `Simulation.run()` |
-
----
-
-## Top-level use case
+This repo has three distinct user roles — each with different entry points,
+expectations, and output needs.
 
 ```mermaid
-graph TB
-    subgraph System["macroabm-ca System"]
-        direction LR
+graph TD
+    DE[("Data Engineer\n(ingests raw data)")]
+    CAL[("Calibrator\n(tunes model parameters)")]
+    AN[("Policy Analyst\n(runs scenarios)")]
 
-        subgraph DP[Data Preparation]
-            UC1[Configure country data sources]
-            UC2[Process raw readers to synthetic data]
-            UC3[Validate synthetic population & firms]
-        end
-
-        subgraph CAL[Calibration]
-            UC4[Define prior distributions]
-            UC5[Sample parameters & run simulations]
-            UC6[Train posterior with SNPE]
-        end
-
-        subgraph SIM[Simulation & Analysis]
-            UC7[Configure country & simulation parameters]
-            UC8[Run multi-step simulation]
-            UC9[Inspect time-series output]
-            UC10[Compare counterfactual scenarios]
-        end
+    subgraph system[macroabm-ca]
+        UC1["Prepare Synthetic Country\n- Read raw macro data (OECD, IMF, WB, …)\n- Generate synthetic firms, banks, population\n- Validate coherence"]
+        UC2["Calibrate Parameters\n- Run sampler over parameter space\n- Train against historical time series\n- Select best-fit configuration"]
+        UC3["Run Simulation\n- Load calibrated configuration\n- Execute Simulation.run()\n- Save outputs to HDF5"]
+        UC4["Analyse Results\n- Read HDF5 output\n- Compute statistics (Gini, growth, CPI)\n- Visualise time series / maps"]
+        UC5["Extend Model\n- Add new agent type or behavior\n- Implement new market mechanism\n- Add new data reader"]
     end
 
-    DE[Data Engineer] --> UC1
-    DE --> UC2
-    DE --> UC3
-    CALB[Calibrator] --> UC4
-    CALB --> UC5
-    CALB --> UC6
-    ANA[Analyst] --> UC7
-    ANA --> UC8
-    ANA --> UC9
-    ANA --> UC10
+    DE  --> UC1
+    DE  --> UC5
+    CAL --> UC2
+    CAL --> UC3
+    AN  --> UC3
+    AN  --> UC4
+    DE  --> UC5
+    CAL --> UC5
 
-    UC2 -.-> |"produces"| UC6
-    UC6 -.-> |"informs"| UC7
-    UC8 -.-> |"generates"| UC9
-    UC9 -.-> |"feeds"| UC10
+    UC1 -.->|«include»| UC2 : valid data required
+    UC2 -.->|«include»| UC3 : calibration tested via short runs
+    UC3 -.->|«include»| UC4 : output needed for analysis
 ```
 
-Dashed arrows between use cases indicate **data flow**, which is not part of
-the canonical use case diagram but clarifies the pipeline for this specific
-ABM workflow.
+## Use case narratives
 
----
+### UC1: Prepare Synthetic Country
 
-## Detailed use cases
+| Field | Detail |
+|---|---|
+| **Actor** | Data Engineer |
+| **Precondition** | Raw data files available in expected format |
+| **Flow** | 1. Run `macro_data` readers → 2. Generate synthetic firms, households, individuals, etc. → 3. Validate inter-component coherence |
+| **Postcondition** | One or more `SyntheticCountry` objects ready for simulation |
+| **Entry point** | `DataWrapper` / `SyntheticCountry.from_readers()` |
 
-### UC1: Configure country data sources
+### UC2: Calibrate Parameters
 
-```
-Title: Configure country data sources
-Actor: Data Engineer
-Precondition: Raw data files (IO tables, HFCS, Compustat, etc.) exist on disk
-Main flow:
-  1. Engineer selects country codes (e.g. "CAN", "FRA")
-  2. Engineer assigns proxy country for non-EU countries
-  3. Engineer sets time unit (monthly/quarterly)
-  4. System creates DataConfiguration with Country objects
-  5. Engineer specifies which readers to use (defaults or custom)
-Postcondition: DataConfiguration is ready for processing
-```
+| Field | Detail |
+|---|---|
+| **Actor** | Calibrator |
+| **Precondition** | Synthetic country exists; historical target series available |
+| **Flow** | 1. Define parameter ranges → 2. Run `macrocalib.sampler` across parameter space → 3. For each sample, run short simulation → 4. Score against historical data → 5. Select best-fit params |
+| **Postcondition** | Calibrated `SimulationConfiguration` written to disk |
+| **Entry point** | `macrocalib/training/` |
 
-### UC5: Sample parameters & run simulations
+### UC3: Run Simulation
 
-```
-Title: Sample parameters & run simulations
-Actor: Calibrator
-Precondition: DataWrapper and SimulationConfiguration exist
-Main flow:
-  1. Calibrator defines prior distributions over model parameters
-  2. Calibrator selects number of samples and CPU cores
-  3. System instantiates one Simulation per core
-  4. For each sample: system updates config, runs Sim, records observables
-  5. System returns (theta_matrix, obs_matrix) as torch tensors
-Postcondition: Simulation data ready for SNPE training
-```
+| Field | Detail |
+|---|---|
+| **Actor** | Calibrator or Policy Analyst |
+| **Precondition** | Calibrated simulation configuration; valid synthetic data |
+| **Flow** | 1. `Simulation.from_datawrapper()` → 2. Optional: attach pre/post hooks → 3. `Simulation.run()` |
+| **Postcondition** | HDF5 file with per-agent, per-tick time series |
+| **Entry point** | `Simulation.iterate()` / `Simulation.run()` |
 
-### UC8: Run multi-step simulation
+### UC4: Analyse Results
 
-```
-Title: Run multi-step simulation
-Actor: Analyst
-Precondition: DataWrapper built, SimulationConfiguration ready
-Main flow:
-  1. Analyst selects country and proxy
-  2. Analyst sets scale, t_max, and seed
-  3. System builds Simulation.from_datawrapper()
-  4. System runs Simulation.run() for t_max steps
-  5. System writes time-series output to HDF5
-Postcondition: Output file saved to output/ directory
-```
+| Field | Detail |
+|---|---|
+| **Actor** | Policy Analyst |
+| **Precondition** | HDF5 output exists |
+| **Flow** | 1. Open HDF5 → 2. Read time series (per country, per agent) → 3. Compute aggregates / Gini / CPI trajectories → 4. Plot |
+| **Postcondition** | Charts, tables, or report ready for policy discussion |
+| **Entry point** | `test_run/summary_and_viz.py`, `test_run/compare_can_bc.py` |
 
----
+### UC5: Extend Model
 
-## Why add a use case diagram?
+| Field | Detail |
+|---|---|
+| **Actor** | Data Engineer or Calibrator (developer hat) |
+| **Precondition** | Working codebase; understanding of `Agent` base class and `functions` injection |
+| **Flow** | 1. Add new agent class or behavior function → 2. Add corresponding data reader/processor → 3. Wire into `Country` → 4. Test with existing configurations |
+| **Postcondition** | New feature available for calibration and simulation |
+| **Entry point** | Any file under `macromodel/agents/`, `macromodel/markets/`, or `macro_data/readers/` |
 
-Bersini's omission was reasonable for **single-developer, single-purpose**
-models where the person who writes the code is also the person who calibrates
-and the person who analyses results. But:
+## Why a use case diagram here?
 
-1. This repo already has three entry scripts with different `argparse` flags
-   targeting different workflows — the use case diagram reflects that
-   reality.
-2. Kravari & Bassiliades (2015) show that ABMs with a calibration loop
-   (like this one, with `macrocalib`) have a distinct "calibrator" persona
-   whose workflow is fundamentally different from scenario analysis.
-3. Use case diagrams are the **only UML diagram surface that non-programmers
-   can read and validate**. A policy analyst who will never read `country.py`
-   can still confirm that UC8–UC10 match what they need.
+Bersini was right that many ABMs have one user (the researcher who wrote it).
+But this repo was built for **others to extend and reuse** — it has a
+`SCM Providers` badge, a full `mkdocs` site, and pluggable function injection.
+Those are the hallmarks of a multi-user system, where use case diagrams pay off.
 
 ## References
 
-- Kravari, K. & Bassiliades, N. (2015). *A Survey of Agent Platforms.*
-  Journal of Artificial Societies and Social Simulation.
-- Cockburn, A. (2000). *Writing Effective Use Cases.* Addison-Wesley.
+- Kravari, K., & Bassiliades, N. (2015). A Survey of Agent Platforms. *Journal
+  of Artificial Societies and Social Simulation* 18(1)11.
+- Collins, A., Petty, M., Vernon-Bido, D., & Sherfey, S. (2015). A Call to Arms:
+  Standards for Agent-Based Modeling and Simulation. *JASSS* 18(3)12.
+- Bersini, H. (2012). UML for ABM. *JASSS* 15(1)9. (see §4.5 for the original
+  dismissal of use case diagrams.)

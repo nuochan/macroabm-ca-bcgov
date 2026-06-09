@@ -1,124 +1,94 @@
 # UML Demo: Object Diagram
 
-An **object diagram** is a snapshot of instances at a single point in time.
-While a class diagram says "a Firm *has* a price," an object diagram says
-"Firm #3's price = 1.04 at `t=12`." This follows Collins et al. (2015) who
-recommend object diagrams for ABM verification: *"does the state at tick n
-actually match what the sequence diagram predicted?"*
+While class diagrams show the abstract structure, an **object diagram** shows
+a concrete snapshot of instances at one moment in time — the "debugging
+diagram." Collins et al. (2015) specifically advocate object diagrams for ABM
+verification: "does the state at tick *n* match what the sequence diagram
+predicted?"
 
-Bersini does not cover object diagrams, but they are the fourth diagram in the
-"structural" family alongside class, package, and component diagrams. They are
-invaluable for debugging and onboarding — a new contributor can see what a
-"healthy" simulation state looks like.
-
-## Snapshot: mid-simulation tick (t=12, Country=CA)
-
-This shows 2 Firms, 1 Household, 2 Individuals, and their concrete state
-values. Arrows represent runtime links (instance-level associations, not UML
-associations).
+This snapshot corresponds to tick $t = 12$ (one year into a quarterly
+simulation) for `Country("CA")`.
 
 ```mermaid
-graph TB
-    subgraph Country["Country: CA"]
-        subgraph Firms["Firms sector"]
-            F3["Firm #3 (Industry: Manufacturing)<br/>production=142.7  price=1.04<br/>employees=18  capital_stock=2_340"]
-            F7["Firm #7 (Industry: Services)<br/>production=89.2  price=0.98<br/>employees=12  capital_stock=1_100"]
-        end
-
-        subgraph Households["Households"]
-            HH2["Household #2<br/>tenure=OWNER  wealth=45_200<br/>consumption_budget=3.8k"]
-        end
-
-        subgraph Individuals["Individuals"]
-            I4["Individual #4<br/>age=38  gender=MALE  edu=Bachelor<br/>activity=EMPLOYED  income=62.4k<br/>corr_household=2  corr_firm=3"]
-            I9["Individual #9<br/>age=27  gender=FEMALE  edu=Master<br/>activity=EMPLOYED  income=58.1k<br/>corr_household=2  corr_firm=7"]
-        end
-
-        subgraph Markets["Market objects"]
-            LM["LabourMarket<br/>cleared=true  avg_wage=1.02"]
-            CM["CreditMarket<br/>cleared=true  avg_loan_rate=0.037"]
-            HM["HousingMarket<br/>properties=1_240  price_index=1.08"]
-        end
+graph TD
+    subgraph Simulation["sim : Simulation (t = 12)"]
+        country_ca["ca : Country\ncountry_name = 'CA'"]
     end
 
-    F3 -.-> |"corresponding_firm"| I4
-    F7 -.-> |"corresponding_firm"| I9
-    I4 -.-> |"corr_household"| HH2
-    I9 -.-> |"corr_household"| HH2
-    HH2 --> |"holds mortgage"| CM
-    F3 --> |"borrows"| CM
-    F7 --> |"borrows"| CM
-    I4 --> |"labour supply"| LM
-    I9 --> |"labour supply"| LM
-    HH2 --> |"owns property"| HM
+    subgraph Economy["economy : Economy"]
+        ppi["ppi_inflation[12] = 1.02"]
+        growth["total_growth[12] = 1.03"]
+        good_prices["good_prices[12] ↓"]
+    end
 
-    style F3 fill:#e1f5fe
-    style F7 fill:#e1f5fe
-    style HH2 fill:#fff3e0
-    style I4 fill:#e8f5e9
-    style I9 fill:#e8f5e9
-    style LM fill:#fce4ec
-    style CM fill:#fce4ec
-    style HM fill:#fce4ec
+    subgraph FirmsLayer["firms : Firms"]
+        firm0["firm[0]\nindustry = 'Mining'\nproduction = 104.2\nprice = 1.04\nn_employees = 47"]
+        firm1["firm[1]\nindustry = 'Manufacturing'\nproduction = 312.7\nprice = 0.98\nn_employees = 182"]
+        firmN["firm[N] ..."]
+    end
+
+    subgraph HouseholdsLayer["households : Households"]
+        hh0["hh[0]\ntenure = OWNER\nwealth = 52000\nconsumption = 3400"]
+        hh1["hh[1]\ntenure = RENTER\nwealth = 8700\nconsumption = 2100"]
+    end
+
+    subgraph IndividualsLayer["individuals : Individuals"]
+        ind0["ind[0]\nactivity = EMPLOYED\nincome = 5200\nage = 34\ngender = MALE"]
+        ind1["ind[1]\nactivity = UNEMPLOYED\nincome = 1800\nage = 28\ngender = FEMALE"]
+    end
+
+    subgraph CentralBankLayer["central_bank : CentralBank"]
+        cb["policy_rate[12] = 0.035"]
+    end
+
+    subgraph CentralGovLayer["central_government : CentralGovernment"]
+        cg["Income Tax = 0.25\nVAT = 0.05\nbenefits_per_unemployed = 1400"]
+    end
+
+    subgraph BanksLayer["banks : Banks"]
+        bank0["bank[0]\noverdraft_rate = 0.045\nmortgage_rate = 0.055\nis_insolvent = False"]
+    end
+
+    Simulation --> country_ca
+    country_ca --> Economy
+    country_ca --> FirmsLayer
+    country_ca --> HouseholdsLayer
+    country_ca --> IndividualsLayer
+    country_ca --> CentralBankLayer
+    country_ca --> CentralGovLayer
+    country_ca --> BanksLayer
+
+    firm0 -.->|employs| ind0
+    hh0  -.->|contains| ind0
+    hh1  -.->|contains| ind1
+    bank0 -.->|lends to| firm0
+    bank0 -.->|lends to| hh0
 ```
 
-**Key observations:**
+## How to read this
 
-- `Individual #4` works at `Firm #3` in Manufacturing. `Individual #9` works at
-  `Firm #7` in Services. Both belong to `Household #2`.
-- This is the pattern the class diagram prescribes: each `Individual` has
-  one `corresponding_firm` and one `corresponding_household`. The object
-  diagram proves those links exist at runtime.
-- The household participates in both the credit market (mortgage) and the
-  housing market (property ownership), while firms only participate in the
-  credit market.
+| Notation | UML meaning | Example |
+|---|---|---|
+| Box with name:Class | An object instance | `ca : Country` |
+| `attr = value` inside box | Current attribute values (snapshot) | `policy_rate[12] = 0.035` |
+| Solid arrow | Composition link (strong ownership) | `Country → Economy` |
+| Dashed arrow `-.->` | Runtime association / usage | `firm[0] -..-> ind[0]` |
 
----
+**Why this matters:** Note that at $t = 12$:
 
-## Second snapshot: pre/post labour-market clearing
+- `firm[0]`'s price (1.04) is above `firm[1]`'s (0.98), consistent with good_prices.
+- `ind[1]` is `UNEMPLOYED` and receiving ~1,400 in benefits — exactly what
+  `CentralGovernment.benefits_per_unemployed` says.
+- `bank[0]` is solvent and lending to both a firm and a household (no NPL
+  crisis at this tick).
 
-Sometimes the most useful object diagram is **before-and-after** — the same
-two objects at two moments.
-
-```mermaid
-graph LR
-    subgraph Before["Before clearing (t=12)"]
-        I5["Individual #5<br/>activity=UNEMPLOYED<br/>reservation_wage=0.92"]
-        F2["Firm #2<br/>vacancies=3<br/>offered_wage=0.98"]
-    end
-
-    subgraph After["After clearing (t=12)"]
-        I5b["Individual #5<br/>activity=EMPLOYED<br/>started_new_job=True<br/>offered_wage_of_accepted_job=0.98"]
-        F2b["Firm #2<br/>vacancies=2<br/>employees+=1"]
-    end
-
-    Before --> After
-```
-
-This is the exact scenario traced by the Individuals state diagram
-(`UNEMPLOYED → EMPLOYED`) and by the labour-market sequence in the system-wide
-sequence diagram. It answers: *did the matching logic actually place this
-unemployed individual into this firm?*
-
----
-
-## Why object diagrams matter for ABM
-
-Collins et al. (2015) note that ABMs are uniquely suited to object diagrams
-because:
-
-1. Every agent is a discrete instance with a unique ID — the diagram mirrors
-   the runtime reality 1:1.
-2. Before/after snapshots are the fastest way to verify a market-clearing
-   or state-transition logic.
-3. They bridge the gap between the class diagram (what *can* exist) and the
-   debugger (what *does* exist at a given tick).
-
-For this repo, an object diagram is especially useful when debugging the
-labour market (`LabourMarket.clear`) or tracing an individual's income
-computation (`compute_income`).
+A developer who just ran `Simulation.iterate()` can compare this snapshot to
+the simulator's memory dump and verify correctness.
 
 ## References
 
-- Collins, A. et al. (2015). *UML for agent-based modelling and simulation.*
-- UML 2.5 Specification, §9 — Object diagrams.
+- Collins, A., Petty, M., Vernon-Bido, D., & Sherfey, S. (2015). A Call to Arms:
+  Standards for Agent-Based Modeling and Simulation. *JASSS* 18(3)12.
+- Bersini, H. (2012). UML for ABM. *JASSS* 15(1)9. (Does not cover object
+  diagrams, but §§3.2–3.4 on Schelling describe exactly this kind of snapshot
+  for verification.)
