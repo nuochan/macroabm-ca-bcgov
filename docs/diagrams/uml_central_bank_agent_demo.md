@@ -101,8 +101,8 @@ stateDiagram-v2
 flowchart TD
     Start([Start of tick]) --> A[Receive inflation & growth from economy]
     A --> B[Retrieve previous policy rate from time series]
-    B --> C[Apply monetary policy rule (Taylor-type)]
-    C --> D[Apply interest-rate smoothing (rho)]
+    B --> C[Apply monetary policy rule #40;Taylor-type#41;]
+    C --> D[Apply interest-rate smoothing #40;rho#41;]
     D --> E[Return new policy_rate]
     E --> End([End of tick])
 ```

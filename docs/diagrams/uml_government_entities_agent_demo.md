@@ -110,7 +110,7 @@ flowchart TD
     F --> H[Convert to USD and divide across entities]
     G --> H
     H --> I[Set goods_to_buy per entity]
-    I --> J[Set goods_to_sell = zeros (buyer only)]
+    I --> J[Set goods_to_sell = zeros #40;buyer only#41;]
     J --> End([End of tick])
 ```
 
