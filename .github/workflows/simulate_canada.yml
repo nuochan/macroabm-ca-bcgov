@@ -1,21 +1,37 @@
-name: Run Canada and France simulations
+name: Run simulations
 
 on:
-  workflow_dispatch:          # manual trigger from GitHub UI
-  push:
-    branches:
-      - main
-    paths:
-      - "macromodel/**"
-      - "macro_data/**"
-      - "macrocalib/**"
-      - "test_run/**"
-  pull_request:
-    paths:
-      - "macromodel/**"
-      - "macro_data/**"
-      - "macrocalib/**"
-      - "test_run/**"
+  workflow_dispatch:
+    inputs:
+      country:
+        description: 'Country / region'
+        required: true
+        default: 'FRA'
+        type: choice
+        options:
+          - 'FRA'
+          - 'CAN'
+          - 'CAN_BC'
+      custom-country:
+        description: 'Override (free-text country code; leave blank to use the dropdown above)'
+        required: false
+        default: ''
+        type: string
+      scale:
+        description: 'Scale factor (lower = more agents, higher aggregation)'
+        required: false
+        default: '10000'
+        type: string
+      t-max:
+        description: 'Number of timesteps'
+        required: false
+        default: '20'
+        type: string
+      compare-bc:
+        description: 'Run CAN vs CAN_BC comparison (overrides country selection)'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   simulate:
@@ -23,7 +39,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-        country: [CAN, FRA]
+        country: ${{ fromJSON(format('["{0}"]', inputs.custom-country != '' && inputs.custom-country || inputs.country)) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -45,13 +61,20 @@ jobs:
       - name: Install project dependencies
         run: uv sync --python ${{ matrix.python-version }} --extra dev
 
+      - name: Run CAN vs CAN_BC comparison
+        if: inputs.compare-bc
+        run: uv run python test_run/compare_can_bc.py --scale ${{ inputs.scale }} --t-max ${{ inputs.t-max }}
+
       - name: Run ${{ matrix.country }} simulation
-        run: uv run python test_run/run_simulation.py ${{ matrix.country }}
+        if: ${{ ! inputs.compare-bc }}
+        run: uv run python test_run/run_simulation.py ${{ matrix.country }} --scale ${{ inputs.scale }} --t-max ${{ inputs.t-max }}
 
       - name: Inspect income for ${{ matrix.country }}
+        if: ${{ ! inputs.compare-bc }}
         run: uv run python test_run/inspect_income.py ${{ matrix.country }}
 
       - name: Generate summary and visualizations for ${{ matrix.country }}
+        if: ${{ ! inputs.compare-bc }}
         run: uv run python test_run/summary_and_viz.py ${{ matrix.country }}
 
       - name: List output

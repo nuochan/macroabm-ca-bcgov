@@ -339,9 +339,14 @@ class HFCSReader:
 
         # Convert monetary values to local currency
         var_numerical_union = [v for v in var_numerical if v in df.columns]
-        df.loc[:, var_numerical_union] = df.loc[:, var_numerical_union].replace(["A", "M"], np.nan).astype(float)
-        df.loc[:, var_numerical_union] = exchange_rates.from_eur_to_lcu(
-            country=country_name,
-            year=year,
-        ) * df.loc[:, var_numerical_union].apply(pd.to_numeric, errors="coerce")
+        # Convert from Arrow string columns to float, replacing "A"/"M" markers with NaN.
+        # Use df[...] = ... (not .loc) to replace columns entirely, avoiding Arrow dtype
+        # mismatch when writing numeric values back into Arrow string columns.
+        converted = (
+            df[var_numerical_union]
+            .replace(["A", "M"], np.nan)
+            .apply(pd.to_numeric, errors="coerce")
+        )
+        rate = exchange_rates.from_eur_to_lcu(country=country_name, year=year)
+        df[var_numerical_union] = converted * rate
         return df
