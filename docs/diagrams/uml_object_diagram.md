@@ -10,7 +10,7 @@ This snapshot corresponds to tick $t = 12$ (one year into a quarterly
 simulation) for `Country("CA")`.
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph Simulation["sim : Simulation (t = 12)"]
         country_ca["ca : Country\ncountry_name = 'CA'"]
     end

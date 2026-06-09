@@ -9,7 +9,7 @@ This repo has three distinct user roles — each with different entry points,
 expectations, and output needs.
 
 ```mermaid
-graph TD
+flowchart TD
     DE[("Data Engineer\n(ingests raw data)")]
     CAL[("Calibrator\n(tunes model parameters)")]
     AN[("Policy Analyst\n(runs scenarios)")]
@@ -31,9 +31,9 @@ graph TD
     DE  --> UC5
     CAL --> UC5
 
-    UC1 -.->|«include»| UC2 : valid data required
-    UC2 -.->|«include»| UC3 : calibration tested via short runs
-    UC3 -.->|«include»| UC4 : output needed for analysis
+    UC1 -.->|«include» valid data required| UC2
+    UC2 -.->|«include» calibration tested via short runs| UC3
+    UC3 -.->|«include» output needed for analysis| UC4
 ```
 
 ## Use case narratives
