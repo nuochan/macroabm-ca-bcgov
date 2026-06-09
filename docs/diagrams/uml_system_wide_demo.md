@@ -306,8 +306,8 @@ flowchart TB
     end
 
     subgraph SIM[Simulation]
-        S1[iterate(t)]
-        S2[timestep.step()]
+        S1[iterate#40;t#41;]
+        S2[timestep.step#40;#41;]
     end
 
     subgraph ER[ExchangeRates]
