@@ -10,7 +10,7 @@ Each box is a top-level Python package in this repo. Arrows indicate
 *pacakge dependency* (i.e., `A → B` means `A` imports from `B`).
 
 ```mermaid
-graph LR
+flowchart LR
     subgraph external[External Python ecosystem]
         numpy
         pandas
@@ -80,9 +80,9 @@ graph LR
     m_sim --> m_row
     m_cfg --> model
 
-    model --> data : depends on
-    calib --> model : trains against
-    calib --> data : uses
+    model -->|depends on| data
+    calib -->|trains against| model
+    calib -->|uses| data
     tests --> model
     tests --> data
     tests --> calib
