@@ -10,7 +10,7 @@ disaggregated ICIO table (``sectoral_disagg_CAN_2014_v2.csv``).
 Output: ``raw_data/icio/icio_2014_can_provinces_remapped.csv``
 — drop-in replacement for the existing provincial reader path.
 
-Usage:  uv run python test_run/remap_provincial_icio.py
+Usage:  uv run python macro_data/readers/io_tables/remap_provincial_icio.py
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 # ── constants ──────────────────────────────────────────────────────────
 # Aggregate → sub-sector mapping (from oecd_econ/mappings.json + manual
