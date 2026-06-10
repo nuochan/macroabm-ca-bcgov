@@ -3,7 +3,8 @@
 Usage:
     uv run python run_simulation.py                    # France (default)
     uv run python run_simulation.py DEU                # Germany (EU - no proxy needed)
-    uv run python run_simulation.py CAN                # Canada (auto-uses FRA as proxy)
+    uv run python run_simulation.py CAN                # Canada (auto-detects disaggregated if raw_data present)
+    uv run python run_simulation.py CAN --aggregated   # Canada with 18 aggregated industries
     uv run python run_simulation.py CAN --proxy DEU    # Canada with Germany as proxy
     uv run python run_simulation.py USA --proxy FRA    # USA with France as proxy
     uv run python run_simulation.py GBR --proxy DEU    # UK with Germany as proxy
@@ -14,10 +15,16 @@ Usage:
 CAN_BC automatically activates BC's progressive personal income tax
 schedule from ``spoof_data/freda/BC_PIT_2014.csv`` with compound
 CPI inflation indexing.
+
+If ``raw_data/icio/icio_can_2014_disagg.csv`` exists, Canada and its
+regions use 46 disaggregated industries by default.  Otherwise they
+fall back to 18 aggregated sectors.  Use --aggregated to force the
+18-sector mode regardless.
 """
 import argparse
 import sys
 import time
+import warnings
 from pathlib import Path
 
 from macro_data import DataWrapper
@@ -52,6 +59,11 @@ def main():
     parser.add_argument("--t-max", type=int, default=20, help="Number of timesteps (default: 20)")
     parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
     parser.add_argument("--output", default="output", help="Output directory (default: output)")
+    parser.add_argument(
+        "--aggregated", action="store_true", default=False,
+        help="Force aggregated industries (18 sectors) even when disaggregated data is available. "
+             "Applies to Canada and its regions (CAN_BC, CAN_ON, etc.)."
+    )
     args = parser.parse_args()
 
     country = args.country.upper()
@@ -98,14 +110,45 @@ def main():
     else:
         proxy_dict = {}
 
-    # Special handling for Canada disaggregated energy reader
-    is_canada = parent_country == "CAN"
-    use_disagg_can = is_canada and not is_region and proxy_country in eu_countries
+    # Auto-detect whether disaggregated Canada ICIO data is available.
+    # Falls back to 18 aggregated industries when the raw_data folder is
+    # absent (e.g. CI / sample data).  --aggregated overrides to 18 sectors
+    # even when the full data is present.
+    disagg_cio_path = raw_data_dir / "icio" / "icio_can_2014_disagg.csv"
+    disagg_available = disagg_cio_path.exists()
 
-    if is_canada and not use_disagg_can:
-        print("  Note: Using standard Canada configuration")
-    elif use_disagg_can:
-        print("  Note: Using disaggregated Canada energy sector reader")
+    is_canada = parent_country == "CAN"
+    use_disagg_can = (
+        is_canada
+        and proxy_country in eu_countries
+        and disagg_available
+        and not args.aggregated
+    )
+
+    if is_canada:
+        if args.aggregated:
+            if disagg_available:
+                warnings.warn(
+                    "Disaggregated Canada ICIO data is available but --aggregated "
+                    "forces 18 aggregated sectors instead of 46.",
+                    UserWarning,
+                )
+            print("  Note: Forcing aggregated Canada configuration (--aggregated)")
+        elif use_disagg_can:
+            print("  Note: Using disaggregated Canada energy sector reader (auto-detected)")
+        elif not disagg_available:
+            warnings.warn(
+                f"Disaggregated Canada ICIO data not found at {disagg_cio_path}. "
+                f"Falling back to 18 aggregated sectors.",
+                UserWarning,
+            )
+            print("  Note: Disaggregated data not found — using standard Canada configuration")
+    elif args.aggregated:
+        warnings.warn(
+            "--aggregated flag has no effect for non-Canada countries. "
+            f"'{country}' is not a Canada run.",
+            UserWarning,
+        )
 
     # 1. Data preprocessing
     print("\n[1/4] Preprocessing data...")
@@ -155,18 +198,21 @@ def main():
     if country == "CAN_BC":
         print(f"\n  Activating BC progressive PIT schedule ...")
         schedule = PITSchedule.from_name_with_cpi("BC_PIT_2014.csv")
-        print(f"  PIT base year: {schedule.base_year}, CPI years: {sorted(schedule.cpi_map)}")
+        cpi_years = sorted(schedule.cpi_map)
+        print(f"  CPI inflation data: {cpi_years[0]}–{cpi_years[-1]} ({len(cpi_years)} years)")
         thresholds, rates, _, _ = schedule.get_brackets(tax_year=schedule.base_year)
 
         brackets = [(float(thresholds[i]), float(rates[i])) for i in range(len(thresholds))]
         country_config.central_government = CentralGovernmentConfiguration(
             pit_brackets=brackets,
             pit_basic_deduction=schedule.basic_deduction,
+            pit_taxable_income_deductions=schedule.basic_deduction,
             functions=country_config.central_government.functions,
         )
         if schedule.basic_deduction is not None:
             print(f"  Basic personal amount: ${schedule.basic_deduction:,.0f} "
                   f"(credit @ {rates[0]:.1%} = ${schedule.basic_deduction * rates[0]:,.0f})")
+            print(f"  Taxable-income deduction (before brackets): ${schedule.basic_deduction:,.0f}")
         print(f"  Progressive PIT: {len(brackets)} brackets")
         for i, (thresh, rate) in enumerate(brackets):
             print(f"    Bracket {i+1}: up to {thresh:>12,.0f} @ {rate:.1%}")

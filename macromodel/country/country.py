@@ -357,7 +357,18 @@ class Country:
             initial_taxable = individuals.states["Employee Income"] * (
                 1 - central_government.states["Employee Social Insurance Tax"]
             )
-            pit_per_ind = compute_progressive_tax(initial_taxable, pit_thresholds, pit_rates)
+
+            # Apply per-individual taxable-income deductions when configured.
+            pit_taxable_income_deductions = central_government.states.get(
+                "pit_taxable_income_deductions"
+            )
+            taxable_for_brackets = initial_taxable
+            if pit_taxable_income_deductions is not None and pit_taxable_income_deductions > 0:
+                taxable_for_brackets = np.maximum(
+                    0.0, initial_taxable - pit_taxable_income_deductions
+                )
+
+            pit_per_ind = compute_progressive_tax(taxable_for_brackets, pit_thresholds, pit_rates)
 
             # Apply non-refundable basic personal amount credit when configured.
             pit_basic_deduction = central_government.states.get("pit_basic_deduction")
@@ -1397,13 +1408,28 @@ class Country:
         self.economy.ts.bank_insolvency_rate.append([self.banks.compute_insolvency_rate()])
 
         # G5. GOVERNMENT REVENUE
-        # General government fields
+        # Distribute household-level rental and financial income to individuals
+        # for progressive personal income tax calculation.
+        rental_income_per_individual = self.households.distribute_rental_income_to_individuals(
+            housing_data=self.housing_market.states["properties"],
+            corr_households=self.individuals.states["Corresponding Household ID"],
+            individual_employee_income=self.individuals.ts.current("employee_income"),
+            couple_rental_income_split=self.central_government.states["couple_rental_income_split"],
+        )
+        financial_income_per_individual = self.households.distribute_financial_income_to_individuals(
+            household_financial_income=self.households.ts.current("income_financial_assets"),
+            corr_households=self.individuals.states["Corresponding Household ID"],
+            n_individuals=len(self.individuals.states["Corresponding Household ID"]),
+        )
+
         self.central_government.compute_taxes(
             current_ind_employee_income=self.individuals.ts.current("employee_income"),
             current_total_rent_paid=self.households.ts.current("rent")[
                 self.households.states["Tenure Status of the Main Residence"] == 3
             ].sum(),
             current_income_financial_assets=self.households.ts.current("income_financial_assets"),
+            current_ind_rental_income=rental_income_per_individual,
+            current_ind_financial_income=financial_income_per_individual,
             current_ind_activity=self.individuals.states["Activity Status"],
             current_ind_realised_cons=self.households.ts.current("consumption"),
             current_bank_profits=self.banks.ts.current("profits"),

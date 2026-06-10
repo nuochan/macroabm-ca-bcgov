@@ -49,3 +49,32 @@ class CentralGovernmentConfiguration(BaseModel):
         description="Basic personal amount (non-refundable credit base) for PIT.",
     )
 
+    # Per-individual deduction(s) subtracted from the combined taxable
+    # base (employee + rental + financial income) *before* the
+    # progressive bracket calculation.  Unlike ``pit_basic_deduction``
+    # (a non-refundable credit), these deductions lower the bracket a
+    # filer falls into and are therefore more powerful.
+    #
+    # Currently a single flat amount per individual.  Extensible to a
+    # list of named deductions (e.g. age, employment, pension) when
+    # individual-level attributes are needed.
+    pit_taxable_income_deductions: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Flat per-individual deduction from taxable income before brackets.",
+    )
+
+    # Fraction of a couple household's rental income assigned to the
+    # higher-earning adult when distributing household-level rental
+    # income to individuals for progressive PIT.  The lower earner
+    # receives (1 - split).  Applies only to couple households
+    # (Type 2 = couple, Type 4 = couple with children).
+    # Non-couple households split rental income equally among adults.
+    # Default 0.5 = equal 50/50 split.
+    couple_rental_income_split: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Share of couple rental income to higher earner (0.5 = 50/50).",
+    )
+

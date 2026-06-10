@@ -13,7 +13,7 @@ The central government plays a crucial role in:
 - Public finance management
 """
 
-from typing import Any
+from typing import Any, Optional
 
 import h5py
 import numpy as np
@@ -94,6 +94,9 @@ class CentralGovernment(Agent):
         # Snapshot base basic_deduction for CPI inflation indexing.
         self.pit_base_basic_deduction: Optional[float] = states.get("pit_basic_deduction")
 
+        # Snapshot base taxable-income deduction for CPI inflation indexing.
+        self.pit_base_deductions: Optional[float] = states.get("pit_taxable_income_deductions")
+
     @classmethod
     def from_pickled_agent(
         cls,
@@ -150,6 +153,11 @@ class CentralGovernment(Agent):
             states["pit_rates"] = brackets[:, 1]
             if configuration.pit_basic_deduction is not None:
                 states["pit_basic_deduction"] = configuration.pit_basic_deduction
+            if configuration.pit_taxable_income_deductions is not None:
+                states["pit_taxable_income_deductions"] = configuration.pit_taxable_income_deductions
+
+        # Couple rental income split for progressive PIT
+        states["couple_rental_income_split"] = configuration.couple_rental_income_split
 
         data = (synthetic_central_government.central_gov_data.astype(float)).rename_axis("Central Government ID")
 
@@ -266,16 +274,18 @@ class CentralGovernment(Agent):
         current_ind_employee_income: np.ndarray,
         current_total_rent_paid: float,
         current_income_financial_assets: np.ndarray,
-        current_ind_activity: np.ndarray,
-        current_ind_realised_cons: np.ndarray,
-        current_bank_profits: np.ndarray,
-        current_firm_production: np.ndarray,
-        current_firm_price: np.ndarray,
-        current_firm_profits: np.ndarray,
-        current_firm_industries: np.ndarray,
-        current_household_new_real_wealth: np.ndarray,
-        taxes_less_subsidies_rates: np.ndarray,
-        current_total_exports: float,
+        current_ind_rental_income: np.ndarray | None = None,
+        current_ind_financial_income: np.ndarray | None = None,
+        current_ind_activity: np.ndarray = None,
+        current_ind_realised_cons: np.ndarray = None,
+        current_bank_profits: np.ndarray = None,
+        current_firm_production: np.ndarray = None,
+        current_firm_price: np.ndarray = None,
+        current_firm_profits: np.ndarray = None,
+        current_firm_industries: np.ndarray = None,
+        current_household_new_real_wealth: np.ndarray = None,
+        taxes_less_subsidies_rates: np.ndarray = None,
+        current_total_exports: float = 0.0,
     ) -> None:
         """Calculate all tax revenues for the current period.
 
@@ -285,10 +295,17 @@ class CentralGovernment(Agent):
         - Social insurance contributions
         - Capital formation and export taxes
 
+        When ``current_ind_rental_income`` and ``current_ind_financial_income``
+        are provided (not None), the progressive PIT is applied to the
+        combined individual taxable base:
+        employee_income + rental_income + financial_income.
+
         Args:
-            current_ind_employee_income (np.ndarray): Employee incomes
-            current_total_rent_paid (float): Total rent payments
-            current_income_financial_assets (np.ndarray): Financial income
+            current_ind_employee_income (np.ndarray): Employee incomes per individual
+            current_total_rent_paid (float): Total rent paid by renters (scalar)
+            current_income_financial_assets (np.ndarray): Financial income per household
+            current_ind_rental_income (Optional[np.ndarray]): Gross rental income per individual
+            current_ind_financial_income (Optional[np.ndarray]): Financial income per individual
             current_ind_activity (np.ndarray): Individual activity status
             current_ind_realised_cons (np.ndarray): Consumption levels
             current_bank_profits (np.ndarray): Bank profits
@@ -328,15 +345,45 @@ class CentralGovernment(Agent):
         # this is the standard taxable base for personal income tax)
         tot_wages_employed_ind = np.sum([current_ind_employee_income[current_ind_activity == ActivityStatus.EMPLOYED]])
 
-        # Personal income tax: progressive on employee earnings when a
-        # schedule is configured, otherwise flat on all income components.
+        # Build the individual-level taxable base for progressive PIT.
+        taxable_base_per_ind = current_ind_employee_income * (
+            1 - self.states["Employee Social Insurance Tax"]
+        )
+
+        # When rental and financial income are available at the individual
+        # level (distributed from households), add them to the taxable base.
+        use_individual_income = (
+            current_ind_rental_income is not None
+            and current_ind_financial_income is not None
+        )
+        if use_individual_income:
+            taxable_base_per_ind = (
+                taxable_base_per_ind
+                + current_ind_rental_income
+                + current_ind_financial_income
+            )
+
+        # Personal income tax: progressive when a schedule is
+        # configured, otherwise flat on all income components.
         pit_thresholds = self.states.get("pit_thresholds")
         pit_rates = self.states.get("pit_rates")
 
         if pit_thresholds is not None and pit_rates is not None:
-            # --- Progressive PIT on employee income ---
-            taxable_wages = current_ind_employee_income * (1 - self.states["Employee Social Insurance Tax"])
-            pit_per_individual = compute_progressive_tax(taxable_wages, pit_thresholds, pit_rates)
+            # --- Progressive PIT on combined individual taxable base ---
+
+            # Apply per-individual taxable-income deductions (reduces the
+            # base before bracket thresholds, so it can drop a filer into
+            # a lower bracket).
+            pit_taxable_income_deductions = self.states.get("pit_taxable_income_deductions")
+            taxable_income_for_brackets = taxable_base_per_ind
+            if pit_taxable_income_deductions is not None and pit_taxable_income_deductions > 0:
+                taxable_income_for_brackets = np.maximum(
+                    0.0, taxable_base_per_ind - pit_taxable_income_deductions
+                )
+
+            pit_per_individual = compute_progressive_tax(
+                taxable_income_for_brackets, pit_thresholds, pit_rates
+            )
 
             # Apply non-refundable basic personal amount credit when configured.
             # Credit = basic_deduction × lowest_marginal_rate, capped so tax ≥ 0.
@@ -345,22 +392,16 @@ class CentralGovernment(Agent):
                 credit = pit_basic_deduction * float(pit_rates[0])
                 pit_per_individual = np.maximum(0.0, pit_per_individual - credit)
 
-            wage_tax_revenue = pit_per_individual.sum()
-
-            # Rental and financial income remain taxed at the flat effective rate
-            rental_tax_revenue = self.states["Income Tax"] * current_total_rent_paid
-            financial_tax_revenue = self.states["Income Tax"] * current_income_financial_assets.sum()
-
-            total_income_tax = wage_tax_revenue + rental_tax_revenue + financial_tax_revenue
+            total_income_tax = pit_per_individual.sum()
+            rental_tax_revenue = (
+                current_ind_rental_income.sum() if use_individual_income
+                else self.states["Income Tax"] * current_total_rent_paid
+            )
 
             # Update the scalar effective rate so that behavioural decisions
             # (wage-setting, after-tax income, rental income) stay aligned
             # with the progressive schedule.
-            total_taxable_base = (
-                (1 - self.states["Employee Social Insurance Tax"]) * tot_wages_employed_ind
-                + current_total_rent_paid
-                + current_income_financial_assets.sum()
-            )
+            total_taxable_base = taxable_base_per_ind.sum()
             if total_taxable_base > 0:
                 self.states["Income Tax"] = float(total_income_tax / total_taxable_base)
         else:
@@ -406,14 +447,15 @@ class CentralGovernment(Agent):
         cpi_map: dict[int, float],
         base_year: int,
     ) -> None:
-        """Inflate PIT thresholds & basic deduction with compound CPI.
+        """Inflate PIT thresholds, basic deduction, and taxable-income
+        deductions with compound CPI.
 
-        Recomputes ``states["pit_thresholds"]`` and
-        ``states["pit_basic_deduction"]`` by compounding annual CPI
-        inflation rates.  The nominal values stored at construction
+        Recomputes ``states["pit_thresholds"]``,
+        ``states["pit_basic_deduction"]``, and
+        ``states["pit_taxable_income_deductions"]`` by compounding annual
+        CPI inflation rates.  The nominal values stored at construction
         are never modified — inflation is always computed from those
-        original values, making repeated calls safe (e.g. when
-        *tax_year* advances but CPI map is extended).
+        original values, making repeated calls safe.
 
         Call this once per simulated year (every 4 quarterly timesteps)
         to mirror real-world bracket indexation.
@@ -438,6 +480,9 @@ class CentralGovernment(Agent):
 
         if self.pit_base_basic_deduction is not None:
             self.states["pit_basic_deduction"] = self.pit_base_basic_deduction * factor
+
+        if self.pit_base_deductions is not None:
+            self.states["pit_taxable_income_deductions"] = self.pit_base_deductions * factor
 
     def compute_revenue(
         self,

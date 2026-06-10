@@ -6,16 +6,21 @@ Runs both simulations locally and compares:
 3. Key macro indicators (GDP, wages, unemployment, CPI)
 4. Employee income distribution (Gini, percentiles)
 
+If ``raw_data/icio/icio_can_2014_disagg.csv`` exists, both simulations use
+46 disaggregated industries by default.  Use --aggregated to force 18 sectors.
+
 Usage:
     uv run python compare_can_bc.py                     # run both, compare in-process
     uv run python compare_can_bc.py --no-run            # use existing HDF5 files
     uv run python compare_can_bc.py --t-max 10 --scale 5000  # faster test
+    uv run python compare_can_bc.py --aggregated        # use 18 aggregated sectors
 """
 from __future__ import annotations
 
 import argparse
 import sys
 import time
+import warnings
 from pathlib import Path
 
 import matplotlib
@@ -70,7 +75,40 @@ def run_simulation(country: str, args) -> tuple[Simulation, list[float]]:
     needs_proxy = parent not in eu28
     proxy = (args.proxy or "FRA").upper() if needs_proxy else None
     pdict = {parent: proxy} if proxy else {}
-    use_disagg = False  # AGGREGATED (18 sectors) for fair CAN vs CAN_BC comparison
+
+    # Auto-detect disaggregated Canada ICIO data (same logic as run_simulation.py).
+    raw_data_dir = REPO_ROOT / "raw_data"
+    disagg_cio_path = raw_data_dir / "icio" / "icio_can_2014_disagg.csv"
+    disagg_available = disagg_cio_path.exists()
+
+    is_canada = parent == "CAN"
+    use_disagg = is_canada and disagg_available and not args.aggregated
+
+    # Warn on user-visible scenarios (same pattern as run_simulation.py).
+    if is_canada:
+        if args.aggregated:
+            if disagg_available:
+                warnings.warn(
+                    "Disaggregated Canada ICIO data is available but --aggregated "
+                    "forces 18 aggregated sectors instead of 46.",
+                    UserWarning,
+                )
+            print(f"  [{upper}] Forcing aggregated (18 sectors, --aggregated)")
+        elif use_disagg:
+            print(f"  [{upper}] Disaggregated (46 sectors, auto-detected)")
+        elif not disagg_available:
+            warnings.warn(
+                f"Disaggregated Canada ICIO data not found at {disagg_cio_path}. "
+                f"Falling back to 18 aggregated sectors.",
+                UserWarning,
+            )
+            print(f"  [{upper}] Aggregated (18 sectors, data not found)")
+    elif args.aggregated:
+        warnings.warn(
+            f"--aggregated flag has no effect for non-Canada countries. "
+            f"'{upper}' is not a Canada run.",
+            UserWarning,
+        )
 
     msg = "PIT ON" if upper == "CAN_BC" else "flat"
     print(f"  [{upper}] scale={args.scale:,}  t_max={args.t_max}  tax={msg}")
@@ -438,6 +476,10 @@ def main():
     parser.add_argument("--out", default="output")
     parser.add_argument("--no-run", action="store_true",
                         help="Compare from existing HDF5 files in output/")
+    parser.add_argument(
+        "--aggregated", action="store_true", default=False,
+        help="Force aggregated industries (18 sectors) even when disaggregated data is available.",
+    )
     args = parser.parse_args()
 
     out_dir = REPO_ROOT / args.out
