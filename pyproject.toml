@@ -18,6 +18,7 @@ dependencies = [
     "matplotlib",
     "numba",
     "numpy",
+    "openpyxl",
     "pandas",
     "pyarrow",
     "pydantic",

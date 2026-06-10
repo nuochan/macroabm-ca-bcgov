@@ -382,31 +382,23 @@ class PITSchedule:
     # ── factories ───────────────────────────────────────────────────
 
     @classmethod
-    def from_csv(
+    def _from_dataframe(
         cls,
-        path: str | Path,
+        df: pd.DataFrame,
         cpi_map: Optional[dict[int, float]] = None,
     ) -> "PITSchedule":
-        """Load bracket definitions from a CSV file.
+        """Internal factory: validate, coerce, and build from a raw DataFrame.
 
-        Args:
-            path: Path to the CSV file.
-            cpi_map: Optional ``{year: inflation_rate}`` dict.  When
-                provided, ``get_brackets`` can compound-inflate bounds
-                for years beyond the base year.
-
-        Returns:
-            A configured ``PITSchedule`` instance.
+        Callers (:meth:`from_csv`, :meth:`from_excel`) are responsible
+        for reading the data into a ``pd.DataFrame`` and passing it here.
         """
-        df = pd.read_csv(Path(path))
-
         col_map = {c: c.lower() for c in df.columns}
         df = df.rename(columns=col_map)
 
         missing = _REQUIRED_COLS - set(df.columns)
         if missing:
             raise ValueError(
-                f"CSV is missing required columns: {sorted(missing)}. "
+                f"Data is missing required columns: {sorted(missing)}. "
                 f"Found columns: {sorted(df.columns)}"
             )
 
@@ -450,18 +442,101 @@ class PITSchedule:
         return cls(df, cpi_map=cpi_map, basic_deduction=basic_deduction)
 
     @classmethod
+    def from_csv(
+        cls,
+        path: str | Path,
+        cpi_map: Optional[dict[int, float]] = None,
+    ) -> "PITSchedule":
+        """Load bracket definitions from a CSV file.
+
+        Args:
+            path: Path to the CSV file.
+            cpi_map: Optional ``{year: inflation_rate}`` dict.  When
+                provided, ``get_brackets`` can compound-inflate bounds
+                for years beyond the base year.
+
+        Returns:
+            A configured ``PITSchedule`` instance.
+        """
+        df = pd.read_csv(Path(path))
+        return cls._from_dataframe(df, cpi_map=cpi_map)
+
+    @classmethod
+    def from_excel(
+        cls,
+        path: str | Path,
+        sheet_name: str | int = 0,
+        cpi_map: Optional[dict[int, float]] = None,
+    ) -> "PITSchedule":
+        """Load bracket definitions from an Excel file.
+
+        Args:
+            path: Path to the ``.xlsx`` file.
+            sheet_name: Sheet name (str) or index (int) to read.
+                Defaults to the first sheet.
+            cpi_map: Optional ``{year: inflation_rate}`` dict.
+
+        Returns:
+            A configured ``PITSchedule`` instance.
+        """
+        df = pd.read_excel(Path(path), sheet_name=sheet_name)
+        return cls._from_dataframe(df, cpi_map=cpi_map)
+
+    @classmethod
+    def from_excel_with_cpi(
+        cls,
+        path: str | Path,
+        sheet_name: str | int = 0,
+        force_refresh: bool = False,
+    ) -> "PITSchedule":
+        """Load brackets from Excel with CPI inflation from cache or StatCan.
+
+        Resolution order:
+        1. If the sheet has an ``inflation`` column → use it (no fetch).
+        2. Else if ``bc_cpi_inflation.csv`` exists → load from cache.
+        3. Else → fetch live from StatCan table 18-10-0005-01.
+
+        Args:
+            path: Path to the ``.xlsx`` file.
+            sheet_name: Sheet name (str) or index (int) to read.
+            force_refresh: If ``True``, re-download CPI from StatCan
+                (ignored when the sheet has an ``inflation`` column).
+
+        Returns:
+            A ``PITSchedule`` with CPI inflation data.
+        """
+        df = pd.read_excel(Path(path), sheet_name=sheet_name)
+
+        has_inflation = any(c.lower() == "inflation" for c in df.columns)
+        if has_inflation:
+            logger.info("Excel sheet has an inflation column — using embedded values.")
+            return cls._from_dataframe(df)
+
+        cpi = fetch_bc_cpi_inflation(force_refresh=force_refresh)
+        return cls._from_dataframe(df, cpi_map=cpi)
+
+    @classmethod
     def from_name(
         cls,
         filename: str,
         cpi_map: Optional[dict[int, float]] = None,
     ) -> "PITSchedule":
-        """Load a schedule by filename from ``spoof_data/freda/``."""
+        """Load a schedule by filename from ``spoof_data/freda/``.
+
+        Supports ``.csv`` and ``.xlsx`` files.
+        """
         path = _PIT_SCHEDULE_DIR / filename
         if not path.exists():
+            available = sorted([
+                p.name for p in _PIT_SCHEDULE_DIR.glob("*")
+                if p.suffix in (".csv", ".xlsx")
+            ])
             raise FileNotFoundError(
                 f"Schedule file not found: {path}\n"
-                f"Available: {sorted([p.name for p in _PIT_SCHEDULE_DIR.glob('*.csv')])}"
+                f"Available: {available}"
             )
+        if path.suffix.lower() == ".xlsx":
+            return cls.from_excel(path, cpi_map=cpi_map)
         return cls.from_csv(path, cpi_map=cpi_map)
 
     @classmethod
@@ -472,25 +547,34 @@ class PITSchedule:
     ) -> "PITSchedule":
         """Load a schedule by filename from ``spoof_data/freda/`` with CPI.
 
+        Supports ``.csv`` and ``.xlsx`` files.
+
         Resolution order:
-        1. If the CSV has an ``inflation`` column → use it (no fetch).
+        1. If the data has an ``inflation`` column → use it (no fetch).
         2. Else if ``bc_cpi_inflation.csv`` exists → load from cache.
         3. Else → fetch live from StatCan table 18-10-0005-01.
 
         Args:
-            filename: CSV filename (e.g. ``"BC_PIT_2014.csv"``).
+            filename: Filename (e.g. ``"BC_PIT_2014.csv"`` or
+                ``"pit_schedule.xlsx"``).
             force_refresh: If ``True``, re-download CPI from StatCan
-                (ignored when the CSV has an ``inflation`` column).
+                (ignored when the data has an ``inflation`` column).
 
         Returns:
             A ``PITSchedule`` with CPI inflation data.
         """
         path = _PIT_SCHEDULE_DIR / filename
         if not path.exists():
+            available = sorted([
+                p.name for p in _PIT_SCHEDULE_DIR.glob("*")
+                if p.suffix in (".csv", ".xlsx")
+            ])
             raise FileNotFoundError(
                 f"Schedule file not found: {path}\n"
-                f"Available: {sorted([p.name for p in _PIT_SCHEDULE_DIR.glob('*.csv')])}"
+                f"Available: {available}"
             )
+        if path.suffix.lower() == ".xlsx":
+            return cls.from_excel_with_cpi(path, force_refresh=force_refresh)
         return cls.from_csv_with_cpi(path, force_refresh=force_refresh)
 
     @classmethod
