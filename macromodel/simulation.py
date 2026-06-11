@@ -426,7 +426,7 @@ class Simulation:
         conf_string = self.configuration.model_dump()
         h5_file.attrs["configuration"] = str(conf_string)
 
-    def save(self, save_dir: Path | str, file_name: str):
+    def save(self, save_dir: Path | str, file_name: str, countries: list[str] | None = None):
         """Save the complete simulation state to an HDF5 file.
 
         Saves all simulation data including country states, market states,
@@ -436,16 +436,47 @@ class Simulation:
         Args:
             save_dir (Path | str): Directory to save the file in
             file_name (str): Name of the output file
+            countries (list[str] | None): Optional list of country codes to
+                restrict saving to.  When provided, only the named countries'
+                state is written (ROW and GoodsMarket are always included).
+                When None (default), all countries are saved.
         """
         if isinstance(save_dir, str):
             save_dir = Path(save_dir)
-        with h5py.File(save_dir / file_name, "w") as f:
-            self.save_random_seed(f)
-            self.save_configuration(f)
-            # self.exchange_rates.save_to_h5(f)
-            self.rest_of_the_world.save_to_h5(f)
-            self.goods_market.save_to_h5(f)
-            for country in self.countries.values():
+        target = save_dir / file_name
+
+        # ── Fast path: save everything ────────────────────────────
+        if countries is None:
+            with h5py.File(target, "w") as f:
+                self._write_all_to_h5(f)
+            return
+
+        # ── Filtered path: write only kept countries, then prune ─
+        keep = set(countries)
+        all_provs = set(self.countries.keys())
+        drop = {c for c in all_provs - keep if "_" in c}
+
+        if drop:
+            _filtered_h5_save(self, target, keep, drop)
+        else:
+            with h5py.File(target, "w") as f:
+                self._write_all_to_h5(f, keep=keep)
+
+    def _write_all_to_h5(self, f: h5py.File, keep: set[str] | None = None) -> None:
+        """Write the complete simulation state to an open HDF5 file.
+
+        Args:
+            f: Open writable HDF5 file.
+            keep: If given, only countries in this set are written
+                (ROW and GoodsMarket are always included).
+        """
+        self.save_random_seed(f)
+        self.save_configuration(f)
+        # self.exchange_rates.save_to_h5(f)
+        self.rest_of_the_world.save_to_h5(f)
+        self.goods_market.save_to_h5(f)
+        for cname, country in self.countries.items():
+            if keep is None or cname in keep:
                 country.save_to_h5(f)
 
     def shallow_df_dict(self):
@@ -457,7 +488,7 @@ class Simulation:
         df_dict = {country: self.countries[country].shallow_output() for country in self.countries}
         return df_dict
 
-    def shallow_hdf_save(self, save_dir: Path | str, file_name: str):
+    def shallow_hdf_save(self, save_dir: Path | str, file_name: str, countries: list[str] | None = None):
         """Save a simplified version of the simulation results to an HDF5 file.
 
         Saves summary statistics and key metrics for each country, using less
@@ -466,10 +497,14 @@ class Simulation:
         Args:
             save_dir (Path | str): Directory to save the file in
             file_name (str): Name of the output file
+            countries (list[str] | None): Optional list of country codes to
+                restrict saving to.  When None (default), all countries are saved.
         """
         if isinstance(save_dir, str):
             save_dir = Path(save_dir)
         for country_name, country in self.countries.items():
+            if countries is not None and country_name not in countries:
+                continue
             df = country.shallow_output()
             industry_df = country.firms.industries_dataframe
             df.to_hdf(save_dir / file_name, key=country_name, mode="a")
@@ -507,6 +542,53 @@ class Simulation:
             pd.DataFrame: DataFrame containing detailed GDP breakdown for the country
         """
         return self.countries[country].gdp_components_df
+
+
+def _should_keep_dataset(name: str, drop_codes: list[str]) -> bool:
+    """Return True if *name* should be kept (doesn't reference a dropped province)."""
+    basename = name.rsplit("/", 1)[-1]
+    for code in drop_codes:
+        if basename.endswith(f"_{code}") or f"_{code}_" in basename:
+            return False
+    return True
+
+
+def _filtered_h5_save(sim: "Simulation", target: Path, keep: set[str], drop: set[str]) -> None:
+    """Save the simulation, pruning per-province datasets for codes in *drop*.
+
+    Writes to a temporary file first (only kept countries), then copies
+    only the wanted datasets into the target file.  This avoids the HDF5
+    "space not reclaimed on delete" problem.
+    """
+    import os as _os
+    import tempfile as _tempfile
+
+    drop_list = sorted(drop, key=len, reverse=True)
+    temp_fd, temp_path = _tempfile.mkstemp(suffix=".h5", dir=str(target.parent))
+    _os.close(temp_fd)
+
+    try:
+        # ══ 1. Write only kept countries + ROW/GM to temp ═══════
+        with h5py.File(temp_path, "w") as ft:
+            sim._write_all_to_h5(ft, keep=keep)
+
+        # ══ 2. Copy into target, skipping per-province datasets ═
+        with h5py.File(temp_path, "r") as ft, h5py.File(target, "w") as out:
+            for k, v in ft.attrs.items():
+                out.attrs[k] = v
+
+            def _copy_group(src_grp: h5py.Group, dst_grp: h5py.Group, prefix: str) -> None:
+                for name, item in src_grp.items():
+                    full = f"{prefix}/{name}" if prefix else name
+                    if isinstance(item, h5py.Group):
+                        sub = dst_grp.require_group(name)
+                        _copy_group(item, sub, full)
+                    elif _should_keep_dataset(full, drop_list):
+                        src_grp.copy(name, dst_grp, name=name)
+
+            _copy_group(ft, out, "")
+    finally:
+        _os.unlink(temp_path)
 
 
 def check_compatibility(
