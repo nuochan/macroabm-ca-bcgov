@@ -58,7 +58,7 @@ def main():
     parser.add_argument("--scale", type=int, default=10_000, help="Scale factor (default: 10000)")
     parser.add_argument("--t-max", type=int, default=20, help="Number of timesteps (default: 20)")
     parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
-    parser.add_argument("--output", default="output", help="Output directory (default: output)")
+    parser.add_argument("--output", default="output/single_run", help="Output directory (default: output/single_run)")
     parser.add_argument(
         "--aggregated", action="store_true", default=False,
         help="Force aggregated industries (18 sectors) even when disaggregated data is available. "

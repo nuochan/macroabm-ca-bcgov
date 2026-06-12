@@ -116,7 +116,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Summarize shallow simulation outputs and plot metrics.")
     parser.add_argument("country", nargs="?", default=DEFAULT_COUNTRY, help="Country code (default: FRA)")
     parser.add_argument("h5_file", nargs="?", default=None, help="Path to shallow HDF5 file")
-    parser.add_argument("--out", default="output", help="Output directory for CSV/plots (default: output)")
+    parser.add_argument("--out", default="output/single_run", help="Output directory for CSV/plots (default: output/single_run)")
     args = parser.parse_args(argv)
 
     country = args.country.upper()
@@ -126,7 +126,7 @@ def main(argv=None):
     if args.h5_file:
         h5_path = Path(args.h5_file)
     else:
-        h5_path = Path(__file__).resolve().parent.parent / "output" / f"sim_{country.lower()}_shallow.h5"
+        h5_path = Path(__file__).resolve().parent.parent / "output" / "single_run" / f"sim_{country.lower()}_shallow.h5"
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
