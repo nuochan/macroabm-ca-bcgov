@@ -9,25 +9,51 @@ Usage:
     uv run python run_simulation.py USA --proxy FRA    # USA with France as proxy
     uv run python run_simulation.py GBR --proxy DEU    # UK with Germany as proxy
     uv run python run_simulation.py CAN --scale 5000   # Custom scale
-    uv run python run_simulation.py CAN_BC             # British Columbia (auto progressive PIT)
+    uv run python run_simulation.py CAN_BC             # BC provincial economy (auto progressive PIT)
+    uv run python run_simulation.py CAN_BC --national  # BC using national CAN table (no inter-prov. trade)
     uv run python run_simulation.py CAN_ON --scale 2000
 
-CAN_BC automatically activates BC's progressive personal income tax
-schedule from ``spoof_data/freda/BC_PIT_2014.csv`` with compound
-CPI inflation indexing.
+CAN_BC (and other CAN_XX regions) automatically activate BC's progressive
+personal income tax schedule from ``spoof_data/freda/BC_PIT_2014.csv``
+with compound CPI inflation indexing.
 
-If ``raw_data/icio/icio_can_2014_disagg.csv`` exists, Canada and its
-regions use 46 disaggregated industries by default.  Otherwise they
-fall back to 18 aggregated sectors.  Use --aggregated to force the
-18-sector mode regardless.
+If ``raw_data/icio/icio_2014_can_provinces_remapped.csv`` exists, CAN regions
+default to the full provincial simulation (10 provinces, 50 industries) with
+inter-provincial trade.  Use --national to fall back to the single-country
+national IO table (46 industries) instead.  Provincial mode defaults to a
+scale divisor of 500 when --scale is not explicitly supplied.
+
+If ``raw_data/icio/icio_can_2014_disagg.csv`` exists, ``CAN`` (national) uses
+46 disaggregated industries by default.  Use --aggregated for 18 sectors.
 """
 import argparse
+import logging
 import sys
 import time
 import warnings
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
+
+# ── Suppress expected noise in provincial mode ────────────────
+# 10 provinces × 50 industries = sparse IO table with legitimate
+# zero-value cells throughout.  These produce harmless warnings.
+np.seterr(divide="ignore", invalid="ignore")
+warnings.simplefilter("ignore", pd.errors.PerformanceWarning)
+warnings.filterwarnings("ignore", message=".*Overwriting Consumption.*")
+warnings.filterwarnings("ignore", message="GDP output/expenditure mismatch > 5%:.*")
+
+
+def _suppress_expected_proxy_logs(record: logging.LogRecord) -> bool:
+    return record.getMessage() != "Overwriting Consumption Weights by Income with French Data"
+
+
+logging.getLogger().addFilter(_suppress_expected_proxy_logs)
+
 from macro_data import DataWrapper
+from macro_data.configuration.countries import Country as Ctry
+from macro_data.configuration.region import Region
 from macro_data.configuration_utils import default_data_configuration
 from macro_data.readers.taxation.personal_income_tax.pit_schedule import PITSchedule
 from macromodel.configurations import CountryConfiguration, SimulationConfiguration
@@ -55,7 +81,10 @@ def main():
     parser = argparse.ArgumentParser(description="Run macroeconomic simulation for a country.")
     parser.add_argument("country", nargs="?", default="FRA", help="Country code (default: FRA)")
     parser.add_argument("--proxy", default=None, help="Proxy country for non-EU countries (default: FRA for non-EU)")
-    parser.add_argument("--scale", type=int, default=10_000, help="Scale factor (default: 10000)")
+    parser.add_argument(
+        "--scale", type=int, default=10_000,
+        help="Population/economy divisor: lower values create more synthetic agents (default: 10000)."
+    )
     parser.add_argument("--t-max", type=int, default=20, help="Number of timesteps (default: 20)")
     parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
     parser.add_argument("--output", default="output/single_run", help="Output directory (default: output/single_run)")
@@ -63,6 +92,16 @@ def main():
         "--aggregated", action="store_true", default=False,
         help="Force aggregated industries (18 sectors) even when disaggregated data is available. "
              "Applies to Canada and its regions (CAN_BC, CAN_ON, etc.)."
+    )
+    parser.add_argument(
+        "--national", action="store_true", default=False,
+        help="Use the national IO table (46 industries) instead of the provincial one "
+             "for CAN regions.  Only meaningful for CAN_BC, CAN_ON, etc.; ignored otherwise."
+    )
+    parser.add_argument(
+        "--save-all", action="store_true", default=False,
+        help="Save all provinces in the H5 output (default: only the target province "
+             "in provincial mode).  Ignored for non-provincial runs."
     )
     args = parser.parse_args()
 
@@ -111,22 +150,70 @@ def main():
         proxy_dict = {}
 
     # Auto-detect whether disaggregated Canada ICIO data is available.
-    # Falls back to 18 aggregated industries when the raw_data folder is
-    # absent (e.g. CI / sample data).  --aggregated overrides to 18 sectors
-    # even when the full data is present.
     disagg_cio_path = raw_data_dir / "icio" / "icio_can_2014_disagg.csv"
     disagg_available = disagg_cio_path.exists()
 
+    # Auto-detect provincial IO table.
+    prov_remapped_path = raw_data_dir / "icio" / "icio_2014_can_provinces_remapped.csv"
+    prov_original_path = raw_data_dir / "icio" / "icio_2014_can_provinces.csv"
+    provincial_available = prov_remapped_path.exists() or prov_original_path.exists()
+
     is_canada = parent_country == "CAN"
+
+    # ── Provincial mode: CAN regions default to 10-province simulation
+    # when provincial IO data is available.  --national forces fallback.
+    use_provincial = (
+        is_canada
+        and is_region
+        and provincial_available
+        and not args.national
+    )
+
+    # ── National disaggregated mode (CAN only, not regions) ──
     use_disagg_can = (
         is_canada
+        and not use_provincial
         and proxy_country in eu_countries
         and disagg_available
         and not args.aggregated
     )
 
-    if is_canada:
+    # ── Scale: lower = more agents.  The scale is a divisor (e.g.
+    # n_households ≈ real_households / scale).  Provincial mode needs
+    # enough agents for 10 provinces × 50 industries, but too many agents
+    # can exhaust memory in the goods market.
+    _DEFAULT_SCALE = 10_000
+    _PROVINCIAL_DEFAULT_SCALE = 500
+    if use_provincial and args.scale == _DEFAULT_SCALE:
+        print(
+            f"  NOTE: Auto-adjusting provincial scale from {args.scale:,} to "
+            f"{_PROVINCIAL_DEFAULT_SCALE:,} (lower divisor = more agents)."
+        )
+        args.scale = _PROVINCIAL_DEFAULT_SCALE
+    elif use_provincial and args.scale < 500:
+        warnings.warn(
+            f"Provincial scale {args.scale:,} creates many agents and may exhaust "
+            f"memory during goods-market setup.  Try --scale 500 or higher if this run fails.",
+            UserWarning,
+        )
+    elif use_provincial and args.scale > 1_000:
+        warnings.warn(
+            f"Provincial scale {args.scale:,} may create too few synthetic agents "
+            f"for small provinces/industries.  Try --scale 500 if this run fails.",
+            UserWarning,
+        )
+
+    # ── Mode announcements ──
+    if use_provincial:
         if args.aggregated:
+            warnings.warn("--aggregated ignored in provincial mode.", UserWarning)
+        print("  Note: Provincial simulation (10 provinces, auto-detected)")
+        print("  Note: Consumption weights by income for all provinces use French proxy data")
+        print("  Note: GDP output/expenditure mismatch warnings are summarized and suppressed in provincial mode")
+    elif is_canada:
+        if is_region and args.national:
+            print("  Note: Forcing national-table fallback (--national)")
+        elif args.aggregated:
             if disagg_available:
                 warnings.warn(
                     "Disaggregated Canada ICIO data is available but --aggregated "
@@ -154,12 +241,38 @@ def main():
     print("\n[1/4] Preprocessing data...")
     step_start = time.perf_counter()
     
-    if is_region:
-        # ── Subnational region path ──
-        # For a single region, run the parent country but label output
-        # with the region name.  Multi-region provincial simulations
-        # require the full aggregation_structure + provincial reader
-        # pipeline (see conftest examples).
+    if use_provincial:
+        # ── Provincial path (10 provinces, 50 industries) ──
+        can = Ctry("CAN")
+        fra = Ctry("FRA")
+        data_config = default_data_configuration(
+            countries=[can], proxy_country_dict={can: fra},
+            scale={can: args.scale}, seed=args.seed,
+            aggregate_industries=False,
+        )
+        base_conf = data_config.country_configs[can]
+
+        provinces = [
+            Region.from_code("CAN_AB", "Alberta"),
+            Region.from_code("CAN_BC", "British Columbia"),
+            Region.from_code("CAN_MB", "Manitoba"),
+            Region.from_code("CAN_NB", "New Brunswick"),
+            Region.from_code("CAN_NL", "Newfoundland and Labrador"),
+            Region.from_code("CAN_NS", "Nova Scotia"),
+            Region.from_code("CAN_ON", "Ontario"),
+            Region.from_code("CAN_PE", "Prince Edward Island"),
+            Region.from_code("CAN_QC", "Quebec"),
+            Region.from_code("CAN_SK", "Saskatchewan"),
+        ]
+        for p in provinces:
+            data_config.country_configs[p] = base_conf
+            data_config.country_configs[p].eu_proxy_country = fra
+        data_config.aggregation_structure = {can: provinces}
+
+        datawrapper = DataWrapper.from_config(data_config, raw_data, single_hfcs_survey=True)
+
+    elif is_region:
+        # ── Subnational region path (national-table fallback) ──
         print(f"  Running as parent country {parent_country} (region label: {country})")
         data_config = default_data_configuration(
             countries=[parent_country],
@@ -169,6 +282,7 @@ def main():
             use_disagg_can_2014_reader=use_disagg_can,
             aggregate_industries=not use_disagg_can,
         )
+        datawrapper = DataWrapper.from_config(data_config, raw_data, single_hfcs_survey=True)
     else:
         # ── Country path (backward compatible) ──
         data_config = default_data_configuration(
@@ -179,8 +293,7 @@ def main():
             use_disagg_can_2014_reader=use_disagg_can,
             aggregate_industries=not use_disagg_can,
         )
-
-    datawrapper = DataWrapper.from_config(data_config, raw_data, single_hfcs_survey=True)
+        datawrapper = DataWrapper.from_config(data_config, raw_data, single_hfcs_survey=True)
     step_elapsed = time.perf_counter() - step_start
     print(f"  Created {datawrapper.n_industries} industries in {format_duration(step_elapsed)}")
 
@@ -189,7 +302,7 @@ def main():
     print("\n[2/4] Configuring simulation...")
     n_industries = datawrapper.n_industries
 
-    if use_disagg_can:
+    if n_industries > 18:
         country_config = CountryConfiguration.n_industry_default(n_industries=n_industries)
     else:
         country_config = CountryConfiguration()
@@ -214,12 +327,34 @@ def main():
         for i, (thresh, rate) in enumerate(brackets):
             print(f"    Bracket {i+1}: up to {thresh:>12,.0f} @ {rate:.1%}")
 
-    # For the region path, the datawrapper only has the parent country
-    # but we label output files with the region name.
     sim_key = parent_country if is_region else country
 
+    if use_provincial:
+        # All 10 provinces need a config (not just the target).
+        all_provinces = [
+            Region.from_code("CAN_AB", "Alberta"),
+            Region.from_code("CAN_BC", "British Columbia"),
+            Region.from_code("CAN_MB", "Manitoba"),
+            Region.from_code("CAN_NB", "New Brunswick"),
+            Region.from_code("CAN_NL", "Newfoundland and Labrador"),
+            Region.from_code("CAN_NS", "Nova Scotia"),
+            Region.from_code("CAN_ON", "Ontario"),
+            Region.from_code("CAN_PE", "Prince Edward Island"),
+            Region.from_code("CAN_QC", "Quebec"),
+            Region.from_code("CAN_SK", "Saskatchewan"),
+        ]
+        default_cc = CountryConfiguration.n_industry_default(n_industries=n_industries)
+        all_configs = {p: default_cc for p in all_provinces}
+        for p in all_provinces:
+            if str(p) == country:
+                all_configs[p] = country_config  # progressive PIT on target
+                sim_key = str(p)
+                break
+    else:
+        all_configs = {sim_key: country_config}
+
     sim_config = SimulationConfiguration(
-        country_configurations={sim_key: country_config},
+        country_configurations=all_configs,
         t_max=args.t_max,
         seed=args.seed,
     )
@@ -251,7 +386,16 @@ def main():
                 )
         simulation.posthooks.append(_index_pit_brackets)
 
-    simulation.run()
+    try:
+        simulation.run()
+    except MemoryError as exc:
+        if use_provincial:
+            raise MemoryError(
+                "Provincial simulation ran out of memory during goods-market setup. "
+                "Increase the scale divisor to create fewer agents, e.g. --scale 750 "
+                "or --scale 1000."
+            ) from exc
+        raise
     step_elapsed = time.perf_counter() - step_start
     print(f"  Simulation complete in {format_duration(step_elapsed)}")
     print(f"  Average per timestep: {step_elapsed / args.t_max:.2f}s")
@@ -261,15 +405,17 @@ def main():
     sim_file = output_dir / f"sim_{country.lower()}.h5"
     shallow_file = output_dir / f"sim_{country.lower()}_shallow.h5"
     
-    simulation.save(save_dir=output_dir, file_name=sim_file.name)
-    simulation.shallow_hdf_save(save_dir=output_dir, file_name=shallow_file.name)
+    # In provincial mode, only save the target province unless --save-all.
+    _save_countries = None if (args.save_all or not use_provincial) else [sim_key]
+    simulation.save(save_dir=output_dir, file_name=sim_file.name, countries=_save_countries)
+    simulation.shallow_hdf_save(save_dir=output_dir, file_name=shallow_file.name, countries=_save_countries)
     
     print(f"  Full output: {sim_file}")
     print(f"  Shallow output: {shallow_file}")
 
-    # Print summary — use parent_country for region runs
+    # Print summary
     results = simulation.shallow_df_dict()
-    summary_key = parent_country if is_region else country
+    summary_key = sim_key
     print(f"\n=== Summary for {country} ===")
     if summary_key in results:
         print(results[summary_key].head())
