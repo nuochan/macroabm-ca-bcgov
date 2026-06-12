@@ -1,13 +1,15 @@
-# UML Demo: Object Diagram
+# UML: Object Diagram — Original Upstream Design
 
 While class diagrams show the abstract structure, an **object diagram** shows
 a concrete snapshot of instances at one moment in time — the "debugging
-diagram." Collins et al. (2015) specifically advocate object diagrams for ABM
-verification: "does the state at tick *n* match what the sequence diagram
-predicted?"
+diagram."
 
 This snapshot corresponds to tick $t = 12$ (one year into a quarterly
-simulation) for `Country("CA")`.
+simulation) for `Country("CA")` under the **original flat-tax design**.
+
+Reference: Collins et al. (2015). A Call to Arms: Standards for ABM. *JASSS* 18(3)12.
+
+---
 
 ```mermaid
 flowchart TD
@@ -24,7 +26,6 @@ flowchart TD
     subgraph FirmsLayer["firms : Firms"]
         firm0["firm[0]\nindustry = 'Mining'\nproduction = 104.2\nprice = 1.04\nn_employees = 47"]
         firm1["firm[1]\nindustry = 'Manufacturing'\nproduction = 312.7\nprice = 0.98\nn_employees = 182"]
-        firmN["firm[N] ..."]
     end
 
     subgraph HouseholdsLayer["households : Households"]
@@ -33,8 +34,8 @@ flowchart TD
     end
 
     subgraph IndividualsLayer["individuals : Individuals"]
-        ind0["ind[0]\nactivity = EMPLOYED\nincome = 5200\nage = 34\ngender = MALE"]
-        ind1["ind[1]\nactivity = UNEMPLOYED\nincome = 1800\nage = 28\ngender = FEMALE"]
+        ind0["ind[0]\nactivity = EMPLOYED\nemployee_income = 5200\nage = 34"]
+        ind1["ind[1]\nactivity = UNEMPLOYED\nemployee_income = 0\nincome_from_benefits = 1400\nage = 28"]
     end
 
     subgraph CentralBankLayer["central_bank : CentralBank"]
@@ -42,7 +43,7 @@ flowchart TD
     end
 
     subgraph CentralGovLayer["central_government : CentralGovernment"]
-        cg["Income Tax = 0.25\nVAT = 0.05\nbenefits_per_unemployed = 1400"]
+        cg["Income Tax = 0.25  ← FLAT rate\nVAT = 0.05\nEmployee SI = 0.046\nEmployer SI = 0.062\nProfit Tax = 0.20\nbenefits_per_unemployed = 1400"]
     end
 
     subgraph BanksLayer["banks : Banks"]
@@ -59,36 +60,38 @@ flowchart TD
     country_ca --> BanksLayer
 
     firm0 -.->|employs| ind0
-    hh0  -.->|contains| ind0
-    hh1  -.->|contains| ind1
+    hh0 -.->|contains| ind0
+    hh1 -.->|contains| ind1
     bank0 -.->|lends to| firm0
     bank0 -.->|lends to| hh0
 ```
+
+## Key flat-tax snapshot values at t=12
+
+| Component | Attribute | Value | Notes |
+|-----------|-----------|-------|-------|
+| CentralGovernment | `Income Tax` | 0.25 | Single scalar — all income taxed at 25% |
+| CentralGovernment | `VAT` | 0.05 | Flat VAT |
+| CentralGovernment | `Employee SI` | 0.046 | Deducted before flat tax applied |
+| CentralGovernment | `Employer SI` | 0.062 | Paid by firms |
+| CentralGovernment | `Profit Tax` | 0.20 | Corporate rate |
+| Individuals[0] | `employee_income` | 5200 | Gross wage; after-tax = 5200 × (1-0.046) × (1-0.25) = 3720.15 |
+| Individuals[1] | `income_from_benefits` | 1400 | Unemployment benefit (not taxed) |
+
+**Tax calculation for ind[0] (EMPLOYED):**
+```
+taxable_wage = 5200 × (1 - 0.046) = 4960.8
+tax = 4960.8 × 0.25 = 1240.2
+after_tax = 4960.8 - 1240.2 = 3720.6
+```
+
+---
 
 ## How to read this
 
 | Notation | UML meaning | Example |
 |---|---|---|
-| Box with name:Class | An object instance | `ca : Country` |
+| Box with `name : Class` | An object instance | `ca : Country` |
 | `attr = value` inside box | Current attribute values (snapshot) | `policy_rate[12] = 0.035` |
 | Solid arrow | Composition link (strong ownership) | `Country → Economy` |
-| Dashed arrow `-.->` | Runtime association / usage | `firm[0] -..-> ind[0]` |
-
-**Why this matters:** Note that at $t = 12$:
-
-- `firm[0]`'s price (1.04) is above `firm[1]`'s (0.98), consistent with good_prices.
-- `ind[1]` is `UNEMPLOYED` and receiving ~1,400 in benefits — exactly what
-  `CentralGovernment.benefits_per_unemployed` says.
-- `bank[0]` is solvent and lending to both a firm and a household (no NPL
-  crisis at this tick).
-
-A developer who just ran `Simulation.iterate()` can compare this snapshot to
-the simulator's memory dump and verify correctness.
-
-## References
-
-- Collins, A., Petty, M., Vernon-Bido, D., & Sherfey, S. (2015). A Call to Arms:
-  Standards for Agent-Based Modeling and Simulation. *JASSS* 18(3)12.
-- Bersini, H. (2012). UML for ABM. *JASSS* 15(1)9. (Does not cover object
-  diagrams, but §§3.2–3.4 on Schelling describe exactly this kind of snapshot
-  for verification.)
+| Dashed arrow `-.->` | Runtime association / usage | `firm[0] -.-> ind[0]` |
